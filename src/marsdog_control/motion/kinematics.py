@@ -11,23 +11,25 @@ RL_HIP_Z = -0.015
 
 # 前腿等效 2-link 参数 (base 偏移已合入 L1)
 # 2026-08-03: URDF 前腿连杆对齐实物 — 大腿(thigh_roll→calf)=90mm,
-# 小腿(calf→tarsus)=110mm, tarsus→foot 不变(~52mm)。
+# 小腿(calf→tarsus)=110mm。
+# 2026-08-06: 前腿 tarsus→接地点只加高 Z（X/Y 不变），|foot|=63mm
+#   fl_foot_joint xyz=(0, -0.005449, -0.062764)；矢状面用 (0, z)。
 # L1 = hip→thigh_roll(-0.0205, 3.82e-5) + thigh_roll→calf(0.028613, -0.085224)
 _FL_L1_VEC = (0.008113, -0.085186)
 _FL_L1 = math.hypot(*_FL_L1_VEC)               # 0.0856 m (髋偏置折叠后的有效大腿)
 _FL_PHI1 = math.atan2(_FL_L1_VEC[1], _FL_L1_VEC[0])  # -84.6°
 # L2 (combined) = calf→tarsus + tarsus→foot; tarsus=0 时的 2-link 兼容路径。
-_FL_L2_VEC = (0.003642, -0.161869)
-_FL_L2 = math.hypot(*_FL_L2_VEC)               # 0.1619 m
-_FL_PHI2 = math.atan2(_FL_L2_VEC[1], _FL_L2_VEC[0])  # -88.7°
+_FL_L2_VEC = (0.003642, -0.172685)
+_FL_L2 = math.hypot(*_FL_L2_VEC)               # 0.1727 m
+_FL_PHI2 = math.atan2(_FL_L2_VEC[1], _FL_L2_VEC[0])  # ~-88.8°
 
 # 前腿 3-link: calf→tarsus = L2s, tarsus→foot = L3。
-# URDF: fl_tarsus_joint ≈(0.003642,-0.109921), fl_foot_joint (0,-0.051948)。
+# URDF: fl_tarsus_joint ≈(0.003642,-0.109921), fl_foot_joint (0,-0.062764)。
 _FL_L2S_VEC = (0.003642, -0.109921)
 _FL_L2S = math.hypot(*_FL_L2S_VEC)             # 0.1100 m (小腿)
 _FL_PHI2S = math.atan2(_FL_L2S_VEC[1], _FL_L2S_VEC[0])  # -88.1°
-_FL_L3_VEC = (0.0, -0.051948)
-_FL_L3 = math.hypot(*_FL_L3_VEC)               # 0.0519 m (tarsus→foot, 不变)
+_FL_L3_VEC = (0.0, -0.062764)
+_FL_L3 = math.hypot(*_FL_L3_VEC)               # 0.0628 m (tarsus→foot, |xyz|=63mm)
 _FL_PHI3 = math.atan2(_FL_L3_VEC[1], _FL_L3_VEC[0])  # -90.0°
 
 # 后腿等效 2-link 参数
