@@ -158,20 +158,27 @@ def smooth_transition(
     control_hz: float = 200.0,
     stop_check: Optional[Callable[[], bool]] = None,
     clock=None,
+    kp_start: float = 0.3,
+    kp_end: float = 1.0,
 ):
     """按 smoothstep 在 duration 内从 from_pos 插值到 to_pos，每步调用 send_fn。
 
     ``send_fn(cur, kp_scale)`` 负责实际下发；``stop_check`` 为真时提前中断并返回 False。
+
+    ``kp_start``/``kp_end``: 刚度随进度线性变化。坐下/趴下应让 ``kp_end``
+    与 hold 入口软刚度对齐，避免过渡最后一帧全增益猛冲。
     """
     clock = clock or time
     steps = max(1, int(duration * control_hz))
+    kp0 = float(kp_start)
+    kp1 = float(kp_end)
     t0 = clock.monotonic()
     for step in range(steps + 1):
         if stop_check is not None and stop_check():
             return False
         alpha = step / steps
         alpha = 3 * alpha * alpha - 2 * alpha * alpha * alpha
-        kp_s = 0.3 + 0.7 * alpha
+        kp_s = kp0 + (kp1 - kp0) * alpha
         cur = {}
         for mid in set(from_pos) | set(to_pos):
             a = from_pos.get(mid, 0.0)

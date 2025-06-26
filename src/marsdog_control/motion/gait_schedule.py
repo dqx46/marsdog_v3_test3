@@ -88,6 +88,35 @@ class GaitEnvelope:
     spot_y_hold_max_m: float = 0.055
     spot_com_shift_m: float = 0.0
 
+    @staticmethod
+    def _stance_band(
+        stance: float,
+        *,
+        floor: float,
+        ceil: float,
+        classic_lo: float,
+        classic_hi: float,
+        band: float = 0.03,
+    ) -> dict:
+        """Build stance_nom/min/max around an explicit duty.
+
+        Classic dog-trot presets (≈0.50–0.62) keep the historical clamp.
+        Explicit low/high duties (e.g. ``--stance 0.36``) keep a ±band
+        around the requested value so schedule interpolation stays valid.
+        """
+        st = float(stance)
+        lo = st - band
+        hi = st + band
+        if classic_lo <= st <= classic_hi:
+            smin = max(classic_lo, lo)
+            smax = min(classic_hi, hi)
+        else:
+            smin = max(floor, lo)
+            smax = min(ceil, hi)
+        smin = min(smin, st)
+        smax = max(smax, st)
+        return {"stance_nom": st, "stance_min": smin, "stance_max": smax}
+
     @classmethod
     def from_wbc_soft_trot(
         cls,
@@ -136,9 +165,10 @@ class GaitEnvelope:
             # Bounds scale with CLI/preset period (no hard 0.85s cap).
             period_min=max(0.40, float(period) * 0.94),
             period_max=float(period) * 1.12,
-            stance_nom=float(stance),
-            stance_min=max(0.50, float(stance) - 0.03),
-            stance_max=min(0.62, float(stance) + 0.03),
+            # Honor CLI/preset duty, including flight-heavy (<0.5). Old floor
+            # max(0.50, …) made --stance 0.36 invert min/max and ignore CLI.
+            **cls._stance_band(float(stance), floor=0.20, ceil=0.95,
+                                classic_lo=0.50, classic_hi=0.62),
             throttle_min_scale=float(throttle_min_scale),
             cruise_turn_scale=float(cruise_turn_scale),
             cruise_turn_yamp=float(cruise_turn_yamp),

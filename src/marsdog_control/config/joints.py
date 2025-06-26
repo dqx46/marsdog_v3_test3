@@ -76,7 +76,8 @@ JOINT_MAP = [
     # ── 前右腿 (Front Right) ──────────────────────────────────────
     JointDesc(5,  "fr_hip_pitch",   49, +1, "lz", "lz_can_a",  -0.97, _PI,
               model="RS02", gear_ratio=1.0),
-    JointDesc(6,  "fr_thigh_roll",  50, +1, "incos", "incos_can",  -0.18, _PI,
+    # lie 捕获可达 ≈-18°; 原 -0.18rad 过窄会在 hold 钳位跳变
+    JointDesc(6,  "fr_thigh_roll",  50, +1, "incos", "incos_can",  -0.40, _PI,
               model="EC-A2806-P2-36", gear_ratio=1.0),
     # 2026-07-17 实测标定: fr 正确站立小腿角为 -电机角 (原 sign=-1 会发 +80° 折反)。
     JointDesc(7,  "fr_calf",        51, +1, "incos", "incos_can",  -1.82, 1.93,
@@ -85,18 +86,20 @@ JOINT_MAP = [
     JointDesc(8,  "fr_tarsus",      -1, +1, "dm", "dm_can",   -0.06, 2.98,
               model="DM-S2325", gear_ratio=2.0),
     # ── 后左腿 (Rear Left) ───────────────────────────────────────
-    JointDesc(9,  "rl_hip",         31, +1, "evo", "evo_can",  -0.49, 0.77,
+    # hip/calf 限位覆盖 sit/lie 捕获姿势(曾 +64°/-102°); 过窄会导致
+    # smooth_transition 直发超限角、hold 经 urdf_pose_to_motor 钳回 → 接缝猛冲
+    JointDesc(9,  "rl_hip",         31, +1, "evo", "evo_can",  -0.85, 1.25,
               model="PA43", gear_ratio=1.0),
     JointDesc(10, "rl_thigh",       32, -1, "lz", "lz_can_b",  -0.71, 1.77,
               model="RS00", gear_ratio=1.0),
-    JointDesc(11, "rl_calf",        33, -1, "lz", "lz_can_b",  -1.56, 0.0,
+    JointDesc(11, "rl_calf",        33, -1, "lz", "lz_can_b",  -1.90, 0.05,
               model="RS00", gear_ratio=1.0),
     # ── 后右腿 (Rear Right) ──────────────────────────────────────
-    JointDesc(12, "rr_hip",         35, -1, "evo", "evo_can",  -0.49, 0.77,
+    JointDesc(12, "rr_hip",         35, -1, "evo", "evo_can",  -1.25, 0.85,
               model="PA43", gear_ratio=1.0),
     JointDesc(13, "rr_thigh",       36, +1, "lz", "lz_can_b",  -1.77, 0.71,
               model="RS00", gear_ratio=1.0),
-    JointDesc(14, "rr_calf",        37, +1, "lz", "lz_can_b",   0.0, 1.56,
+    JointDesc(14, "rr_calf",        37, +1, "lz", "lz_can_b",  -0.05, 1.90,
               model="RS00", gear_ratio=1.0),
     # ── 头部 (Head) ──────────────────────────────────────────────
     JointDesc(15, "head_pitch",     45, +1, "lz", "lz_can_b",  -1.7, 0.5,
@@ -110,7 +113,9 @@ JOINT_MAP = [
               model="PA43", gear_ratio=1.0),
     JointDesc(19, "waist_yaw",      41, +1, "evo", "evo_can",  -1.2, 1.2,
               model="PA43", gear_ratio=1.0),
-    JointDesc(20, "waist_pitch",    40, +1, "evo", "evo_can",   0.0, 0.40,
+    # 实机 sit/lie 捕获 ≈-12°, 站立/诊断可见 +50°; 原 [0,0.40] 把 hold
+    # 目标钳成 0、过渡仍发负角 → 腰 pitch 接缝全增益猛冲
+    JointDesc(20, "waist_pitch",    40, +1, "evo", "evo_can",  -0.35, 1.05,
               model="PA43", gear_ratio=1.0),
     JointDesc(21, "waist_roll",     39, +1, "lz", "lz_can_b",  -1.0, 1.0,
               model="RS02", gear_ratio=1.0),

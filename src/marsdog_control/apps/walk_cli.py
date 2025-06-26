@@ -34,12 +34,12 @@ def parse_args():
     p.add_argument(
         "--gait-period", type=float, default=None, metavar="SEC",
         help="[步频·推荐] SoftTrot/Natural 步态周期(秒); 同时写入 period 与 nat_period 并覆盖预设。"
-             "例: --gait-period 1.0。内部全链路用秒，优先用本参数",
+             "例: --gait-period 1.2。不改 gains/recipe 文件，只覆盖本次运行",
     )
     p.add_argument(
         "--gait-hz", type=float, default=None, metavar="HZ",
         help="[步频·别名] SoftTrot/Natural 步频(Hz); 仅换算为 period=1/HZ，与 --gait-period 二选一。"
-             "例: --gait-hz 1.15",
+             "例: --gait-hz 0.833",
     )
     p.add_argument("--step-h",      type=float, default=CLI.step_h,
                    help="后腿抬腿高度 (m), 默认 2cm")
@@ -86,7 +86,8 @@ def parse_args():
     p.add_argument("--waist-yaw-turn-sign", type=float, default=GAIT.waist_yaw_turn_sign,
                    help="[转向] 腰扭转方向符号, 若腰反向抵消转向改成-1, 默认1")
     p.add_argument("--stance",      type=float, default=CLI.stance,
-                   help="支撑相比例, 默认 0.60")
+                   help="支撑相占空比 duty∈(0,1), SoftTrot 默认随预设(~0.56);"
+                        "显式传入则覆盖预设(例: --stance 0.36 飞跃相更长)。不改 recipe 文件")
     p.add_argument("--hip-abd",     type=float, default=CLI.hip_abd,
                    help="静态髋外展角 (rad), 默认 0.08 (~4.6°)")
     p.add_argument("--hip-abd-test", type=float, default=None, metavar="RAD",
@@ -252,12 +253,12 @@ def parse_args():
     p.add_argument("--no-tail",     action="store_true",
                    help="禁用尾巴后台动作控制")
     p.add_argument("--imu",         action="store_true",
-                   help="兼容开关: 显式启用 IMU 闭环(默认行为, 与历史命令保持一致)")
+                   help="启用 IMU 闭环足高补偿(TEMP: 当前默认关闭, 需显式打开)")
     p.add_argument("--imu-test",    action="store_true",
                    help="IMU 补偿验证模式: 放大增益, stand 下倾斜可见腿部反应")
     # ── Phase1-3 单变量实验开关 (默认全关, 保持黄金基线; 每次只开一个做对照) ──
     p.add_argument("--no-imu",      action="store_true",
-                   help="[P1] 不启用 IMU 闭环(仍记录IMU): 用于 IMU ON/OFF 对照")
+                   help="[P1] 强制关闭 IMU 闭环(仍记录IMU); TEMP 下默认已关, 此开关冗余")
     p.add_argument("--abd-legacy",  action="store_true",
                    help="[P1] 反转髋外展方向(fl_thigh_roll/rl_hip/rr_hip)回修正前, A/B 验证外展方向")
     p.add_argument("--swing-level", type=float, default=GAIT.swing_level,

@@ -134,7 +134,7 @@ class WalkServices:
             low_torque_nm=low_torque_nm)
 
     def smooth_transition(self, lz, evo, dm, incos, from_pos, to_pos, duration,
-                          label="fade"):
+                          label="fade", *, kp_start: float = 0.3, kp_end: float = 1.0):
         def _send(lz_arg, evo_arg, dm_arg, incos_arg, cur, kp_s):
             self.send_all(lz_arg, evo_arg, dm_arg, incos_arg, cur,
                           use_joint_gains=True, kp_scale=kp_s)
@@ -142,7 +142,8 @@ class WalkServices:
         return _smooth_transition_impl(
             lz, evo, dm, incos, from_pos, to_pos, duration, label=label,
             send_fn=_send, control_hz=self.control_hz,
-            stop_check=lambda: self.stop, clock=self.clock)
+            stop_check=lambda: self.stop, clock=self.clock,
+            kp_start=kp_start, kp_end=kp_end)
 
     def shutdown_motors(self, lz, evo, dm=None, incos=None):
         """Close motor drivers in bus-owner order.

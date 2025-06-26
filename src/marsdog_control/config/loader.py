@@ -49,7 +49,9 @@ def runtime_config_from_args(args: Namespace) -> RuntimeConfig:
     natural_trot = bool(_get(args, "natural_trot", False)) or natural_soft_trot
     # 达妙零点由操作约定保证(上电前手动归零), 自然步态即主动驱动 tarsus。
     dm_active = bool(natural_trot or natural_soft_trot)
-    imu_enabled = not bool(_get(args, "no_imu", False))
+    # TEMP: 默认关 IMU 闭环；显式 --imu 打开，--no-imu 强制关
+    imu_enabled = bool(_get(args, "imu", False)) and not bool(
+        _get(args, "no_imu", False))
 
     features = FeatureFlags(
         imu_enabled=imu_enabled,

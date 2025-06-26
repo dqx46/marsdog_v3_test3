@@ -206,8 +206,12 @@ def prepare_walk_startup(
         if overridden:
             print("[nat] 显式 CLI 覆盖预设: " + ", ".join(overridden))
         T = float(getattr(args, "nat_period", natural_params.get("period", 0.87)))
+        st = float(getattr(args, "stance", natural_params.get("stance", 0.56)))
         if T > 1e-6:
-            print(f"[cadence] SoftTrot T={T:.3f}s  f={1.0 / T:.2f} Hz")
+            print(
+                f"[cadence] SoftTrot T={T:.3f}s  f={1.0 / T:.2f} Hz  "
+                f"stance={st:.2f} (swing={1.0 - st:.2f})"
+            )
 
     walk_params = dict(
         NATURAL_WALK_WBC if bool(getattr(args, "wbc", False)) else NATURAL_WALK_REAL

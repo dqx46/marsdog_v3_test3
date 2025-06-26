@@ -110,6 +110,19 @@ class TestGaitCadenceCli(unittest.TestCase):
         self.assertAlmostEqual(float(nat_fwd.period), 0.87, places=2)
         self.assertAlmostEqual(fsm._nat_schedule.env.period_nom, 0.87, places=2)
 
+    def test_cli_stance_and_period_reach_schedule(self):
+        """--gait-period / --stance override SoftTrot without editing recipes."""
+        args, recipe, cfg, nat_fwd, fsm = _trace_soft_trot(
+            ["--gait-period", "1.2", "--stance", "0.36"]
+        )
+        self.assertAlmostEqual(args.stance, 0.36)
+        self.assertAlmostEqual(recipe["stance"], 0.36)
+        self.assertAlmostEqual(float(nat_fwd.stance_ratio), 0.36)
+        self.assertAlmostEqual(fsm._nat_schedule.env.stance_nom, 0.36)
+        self.assertLessEqual(fsm._nat_schedule.env.stance_min, 0.36)
+        self.assertGreaterEqual(fsm._nat_schedule.env.stance_max, 0.36)
+        self.assertAlmostEqual(float(nat_fwd.period), 1.2)
+
     def test_unsynced_recipe_would_ignore_cli(self):
         """Document the old bug: args updated but stale recipe dict wins in builder."""
         with mock.patch.object(sys, "argv", ["walk", "--gait-period", "1.20"]):

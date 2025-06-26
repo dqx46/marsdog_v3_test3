@@ -1,7 +1,8 @@
 #!/bin/bash
 # Marsdog 行走主入口 —— 推荐使用重构后的新包入口。
 #   ./run_walk.sh [walk 参数...]      例: ./run_walk.sh --no-gamepad --no-tail
-#   步频: ./run_walk.sh --gait-period 1.0   或  ./run_walk.sh --gait-hz 1.15
+#   步频/占空比(不改代码): ./run_walk.sh --gait-period 1.2 --stance 0.36
+#   或: ./run_walk.sh --gait-hz 0.833 --stance 0.36
 # 兼容旧入口(等价实现): python3 mocap_to_real/walk.py [参数...]
 #
 # 优先使用 conda 环境 marsdog (含 pinocchio); 否则回退系统 python3。

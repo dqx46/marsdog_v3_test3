@@ -27,8 +27,9 @@ def _default_urdf_path() -> str:
 
 @dataclass(frozen=True)
 class FeatureFlags:
-    imu_enabled: bool = True
-    imu_feedback_enabled: bool = True
+    # TEMP: 默认关闭 IMU 足高补偿；需要时 CLI 传 --imu
+    imu_enabled: bool = False
+    imu_feedback_enabled: bool = False
     gravity_comp_enabled: bool = True
     vmc_enabled: bool = False
     wbc_enabled: bool = False

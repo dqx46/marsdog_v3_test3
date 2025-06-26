@@ -331,21 +331,26 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
 
     # ── Executor (explicit runtime state, no walk globals) ──
     rt.sync_executor_config(ctx.executor)
-    # 姿势 hold：重力补偿从 0 缓入，对齐 smooth_transition（无动态 τ_g）接缝
+    # 姿势 hold：刚度+重力缓入，避免过渡指令到位但实测滞后时全增益猛拉
     _ex_cfg = ctx.executor.config
     _grav_saved = (_ex_cfg.gravity_comp, float(_ex_cfg.gravity_scale))
+    _kp_saved = float(_ex_cfg.kp_scale)
     if ctx.lie_down_session.hold:
-        blend = ctx.lie_down_session.hold_grav_blend(clock.monotonic())
+        mono_now = clock.monotonic()
+        blend = ctx.lie_down_session.hold_grav_blend(mono_now)
+        kp_b = ctx.lie_down_session.hold_kp_blend(mono_now)
         if blend <= 1e-6:
             _ex_cfg.gravity_comp = False
         else:
             _ex_cfg.gravity_scale = _grav_saved[1] * blend
+        _ex_cfg.kp_scale = _kp_saved * float(kp_b)
     try:
         output = ctx.executor.build(
             state, safe_motion, ctx.fsm,
             active_gait=active_trot, t_rel=t_rel, clock=clock)
     finally:
         _ex_cfg.gravity_comp, _ex_cfg.gravity_scale = _grav_saved
+        _ex_cfg.kp_scale = _kp_saved
     velocities = output.target.dq
     kp_phase = output.kp_phase
     trq_ff = output.trq_ff
