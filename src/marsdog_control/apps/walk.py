@@ -381,19 +381,31 @@ def main(args=None):
 
     # ── 读取当前位置 ───────────────────────────────────────────────────────
     print("[pos] 读取当前位置...")
+    # Fade 前再认领一次 LZ MIT（bring-up 后组装栈期间偶发 mode 掉出 2）。
+    if lz is not None:
+        fixed, failed = lz.claim_mit_all(
+            [j.motor_id for j in JOINT_MAP if j.mtype == "lz"],
+            tag="walk/pre-fade",
+        )
+        if fixed:
+            print(f"[mit] walk 补认领: {fixed}")
+        if failed:
+            print(f"[mit] walk 仍未进 MIT: {failed}")
+        lz.print_mit_status(
+            [j.motor_id for j in JOINT_MAP if j.mtype == "lz"],
+            tag="mit",
+        )
+        online = sorted(hw.board.online_ids())
+        hw.online = online
     cur_pos = svc.read_positions(lz, evo, incos)
     # 补上达妙 tarsus 的真实开机位置(read_positions 不含 dm), 保证 DM_TARSUS_ACTIVE=True 时
     # 首次 fade-to-stand 的插值起点是电机实际角度, 而不是误当成 0.0 去斜坡。
     if dm is not None:
         cur_pos.update(DM_FIXED_TARGETS)
-    # Hot-start: hand off bring-up hold → pose hold (no MIT gap).
+    # 与 go_zero 同源: 先 pose_hold，再停 hot_hold（含 --soft-disable 冷启），无 MIT 空窗。
     hot_hold = getattr(hw, "hot_hold", None)
-    if not bool(getattr(args, "soft_disable", False)):
-        svc.start_pose_hold(lz, evo, dm, incos, cur_pos)
-        if hot_hold is not None:
-            hot_hold.stop()
-            hw.hot_hold = None
-    elif hot_hold is not None:
+    svc.start_pose_hold(lz, evo, dm, incos, cur_pos)
+    if hot_hold is not None:
         hot_hold.stop()
         hw.hot_hold = None
     if startup.capture_lie_pose:

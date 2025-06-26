@@ -13,6 +13,7 @@
   ./run_with_env.sh python -m marsdog_control.apps.tools.calibration.go_zero --fade 5
   ./run_with_env.sh python -m marsdog_control.apps.tools.calibration.go_zero --ids 2,3,6,7
   ./run_with_env.sh python -m marsdog_control.apps.tools.calibration.go_zero --include-head
+  ./run_with_env.sh python -m marsdog_control.apps.tools.calibration.go_zero --soft-disable
 """
 
 from __future__ import annotations
@@ -93,6 +94,61 @@ def _precise_wait(timer: list, dt: float) -> None:
         timer[0] = time.perf_counter()
 
 
+def _ensure_mit_preflight(lz, evo, joints) -> list[int]:
+    """Force LZ into MIT (mode=2) and EVO into MOTOR_STATE before fade.
+
+    Hot-start bring-up can leave responders online-but-unlocked; go_zero must
+    not stop the hold thread until these are claimed.
+    """
+    fixed: list[int] = []
+    if lz is not None:
+        lz_ids = [j.motor_id for j in joints if j.mtype == "lz"]
+        claimed, _failed = lz.claim_mit_all(lz_ids, tag="go_zero")
+        fixed.extend(claimed)
+    for j in joints:
+        mid = j.motor_id
+        if j.mtype == "evo" and evo is not None:
+            idx = mid - 1
+            if not evo.is_connected[idx]:
+                continue
+            if evo.status[idx] != 0x02:
+                evo.enter_motor_state(mid)
+                time.sleep(0.005)
+                fixed.append(mid)
+    return fixed
+
+
+def _print_drive_status(lz, evo, incos, dm, joints) -> None:
+    """Diagnose MIT / motor-state before fade so soft axes are visible."""
+    if lz is not None:
+        lz.print_mit_status(
+            [j.motor_id for j in joints if j.mtype == "lz"],
+            tag="mit",
+        )
+    print("[mit] 其它驱动:")
+    for j in joints:
+        mid = j.motor_id
+        if j.mtype == "evo" and evo is not None:
+            idx = mid - 1
+            st = evo.status[idx] if 0 <= idx < len(evo.status) else -1
+            flag = "OK" if st == 0x02 else "!!"
+            print(
+                f"  [{flag}] EVO ID{mid:2d} ({j.name:18s}) "
+                f"status=0x{st:02X} connected={bool(evo.is_connected[idx])}"
+            )
+        elif j.mtype == "incos" and incos is not None:
+            idx = mid - 1
+            en = bool(incos.is_enabled[idx]) if 0 <= idx < len(incos.is_enabled) else False
+            conn = bool(incos.is_connected[idx]) if 0 <= idx < len(incos.is_connected) else False
+            flag = "OK" if conn else "!!"
+            print(
+                f"  [{flag}] INC ID{mid:2d} ({j.name:18s}) "
+                f"connected={conn} enabled={en}"
+            )
+        elif j.mtype == "dm" and dm is not None:
+            print(f"  [OK] DM  ID{mid:2d} ({j.name:18s}) worker={dm.worker_running}")
+
+
 def main(argv: list[str] | None = None) -> int:
     global _stop
     _stop = False
@@ -118,6 +174,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dm", action=argparse.BooleanOptionalAction, default=True,
         help="回零达妙前 tarsus ID4/8（默认开；--no-dm 跳过）",
     )
+    ap.add_argument(
+        "--soft-disable", action="store_true",
+        help="冷启: bring-up clear_fault 失能再使能进 MIT（菜单默认；"
+             "热启保持使能请去掉此开关）",
+    )
     args = ap.parse_args(argv)
 
     leg_scale = (
@@ -125,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.leg_kp_scale is not None
         else float(WALK_LEG_KP_SCALE)
     )
+    clear_fault = bool(args.soft_disable)
 
     print("=" * 60)
     print("  Marsdog 全关节回零  [LZ + EVO + Incos"
@@ -133,6 +195,9 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"  gains=run_walk JOINT_GAINS  leg_kp_scale={leg_scale:.2f}  "
         f"(含静态 trq_ff)"
+    )
+    print(
+        f"  bring-up={'clear_fault 冷启' if clear_fault else 'keep-enabled 热启'}"
     )
     if not args.include_head:
         print(f"  头部/脖子跳过 (ID {sorted(HEAD_IDS)})，加 --include-head 可一起回零")
@@ -144,9 +209,13 @@ def main(argv: list[str] | None = None) -> int:
         joint_gains=JOINT_GAINS,
         leg_kp_scale=leg_scale,
     )
+    # SoftTrot go-zero moves DM to 0 via active path (not fixed-only).
+    if args.dm:
+        runtime_state.dm.active = True
+
     bundle = open_walk_hardware(
         runtime_state,
-        clear_fault=False,
+        clear_fault=clear_fault,
         control_hz=CONTROL_HZ,
         with_imu=False,
         clock=time,
@@ -159,9 +228,6 @@ def main(argv: list[str] | None = None) -> int:
     svc = bundle.svc
     online_ids = {int(mid) for mid in (bundle.online or [])}
     hot_hold = getattr(bundle.session, "hot_hold", None)
-    if hot_hold is not None:
-        hot_hold.stop()
-        bundle.session.hot_hold = None
 
     # ── 筛选目标关节 ─────────────────────────────────────────────
     if args.ids is not None:
@@ -171,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
             j = JOINT_BY_ID.get(mid)
             if j is None or j.bus == "none":
                 print(f"[ERROR] 未知/未接线 motor ID: {mid}")
+                if hot_hold is not None:
+                    hot_hold.stop()
                 svc.shutdown_motors(lz, evo, dm, incos)
                 return 2
             candidate.append(j)
@@ -178,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
         j = JOINT_BY_ID.get(args.id)
         if j is None or j.bus == "none":
             print(f"[ERROR] 未知/未接线 motor ID: {args.id}")
+            if hot_hold is not None:
+                hot_hold.stop()
             svc.shutdown_motors(lz, evo, dm, incos)
             return 2
         candidate = [j]
@@ -199,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not joints:
         print("[ERROR] 没有在线电机，退出。")
+        if hot_hold is not None:
+            hot_hold.stop()
         svc.shutdown_motors(lz, evo, dm, incos)
         return 1
 
@@ -209,8 +281,13 @@ def main(argv: list[str] | None = None) -> int:
 
     trq_ff = static_trq_ff_by_id(JOINT_GAINS)
 
-    print("\n[pos] 等待反馈稳定...")
-    time.sleep(0.3)
+    # ── MIT 预检（hot_hold 仍在跑，避免空窗掉因克斯超时）────────────
+    fixed = _ensure_mit_preflight(lz, evo, joints)
+    if fixed:
+        print(f"[mit] 已补使能/进 MIT: {fixed}")
+    _print_drive_status(lz, evo, incos, dm, joints)
+
+    print("\n[pos] 读取当前位置...")
     cur_pos = svc.read_positions(lz, evo, incos)
     if dm is not None:
         cur_pos.update(runtime_state.dm.fixed_targets)
@@ -220,12 +297,36 @@ def main(argv: list[str] | None = None) -> int:
                     cur_pos[j.motor_id] = float(dm.get_position(j.motor_id))
                 except Exception:
                     cur_pos[j.motor_id] = 0.0
+    # Include all target joints even if read_positions omitted a brand.
+    for j in joints:
+        mid = j.motor_id
+        if mid in cur_pos:
+            continue
+        try:
+            if j.mtype == "lz" and lz is not None:
+                cur_pos[mid] = float(lz.get_position(mid))
+            elif j.mtype == "evo" and evo is not None:
+                cur_pos[mid] = float(evo.get_position(mid))
+            elif j.mtype == "incos" and incos is not None:
+                cur_pos[mid] = float(incos.get_position(mid))
+            elif j.mtype == "dm" and dm is not None:
+                cur_pos[mid] = float(dm.get_position(mid))
+        except Exception:
+            cur_pos[mid] = 0.0
 
     print("[pos] 当前位置:")
     for j in joints:
         mid = j.motor_id
         p = float(cur_pos.get(mid, 0.0))
         print(f"      Motor {mid:2d} ({j.name:18s}) [{j.model}]  {math.degrees(p):8.2f}°")
+
+    # 与 walk.py 同源: 先 pose_hold，再停 hot_hold，fade 无 MIT 空窗。
+    hold_targets = dict(cur_pos)
+    svc.start_pose_hold(lz, evo, dm, incos, hold_targets)
+    if hot_hold is not None:
+        hot_hold.stop()
+        bundle.session.hot_hold = None
+        hot_hold = None
 
     joint_ids = [j.motor_id for j in joints]
     print(f"\n[fade] 开始 {args.fade:.1f}s 平滑回零 — 按 q/ESC 急停\n")
@@ -235,8 +336,10 @@ def main(argv: list[str] | None = None) -> int:
     timer = [time.perf_counter()]
     hz_t0 = time.perf_counter()
     hz_cnt = 0
+    pose_hold_stopped = False
 
     def _send(targets: dict) -> None:
+        nonlocal pose_hold_stopped
         # Keep non-target axes at last measured so board path stays consistent
         full = dict(cur_pos)
         full.update(targets)
@@ -249,6 +352,10 @@ def main(argv: list[str] | None = None) -> int:
             kp_scale=1.0,
             trq_ff=trq_ff,
         )
+        # Overlap: first fade frame sent, then stop pose-hold (no MIT gap).
+        if not pose_hold_stopped:
+            svc.stop_pose_hold()
+            pose_hold_stopped = True
 
     try:
         for step in range(steps + 1):
@@ -302,6 +409,9 @@ def main(argv: list[str] | None = None) -> int:
 
     finally:
         _kb_restore(kb_old)
+        svc.stop_pose_hold()
+        if hot_hold is not None:
+            hot_hold.stop()
         print("\n[cleanup] 关闭主机侧 IO（run_walk WalkServices.shutdown_motors）...")
         # disable=False: close host IO only; leave last MIT hold (same as walk hot-exit).
         svc.shutdown_motors(lz, evo, dm, incos, disable=False)

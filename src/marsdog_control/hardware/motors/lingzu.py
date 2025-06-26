@@ -467,7 +467,7 @@ class MotorLz:
             except Exception:
                 pass
 
-    def ensure_mit(self, motor_id, *, tag="MotorLz", wait_s=0.1) -> bool:
+    def ensure_mit(self, motor_id, *, tag="MotorLz", wait_s=0.15) -> bool:
         """Hot-start: if motor has feedback but mode!=2, enable once into MIT.
 
         Safe to call after the recv thread is running (async mode update).
@@ -494,6 +494,95 @@ class MotorLz:
         self.is_connected[idx] = True
         self._calc_pos_offset(motor_id)
         return True
+
+    def claim_mit_all(
+        self,
+        motor_ids=None,
+        *,
+        tag="MotorLz",
+        wait_s=0.15,
+        hold_kp=80.0,
+        hold_kd=4.0,
+    ):
+        """Force every LZ with feedback into MIT and latch a stiff hold frame.
+
+        Hot-start probe can leave responders with rx>0 but mode!=2, or mode=2
+        without a recent MIT command (looks unlocked). Call after bring-up /
+        before pose_hold / fade.
+
+        Returns ``(fixed_ids, failed_ids)``.
+        """
+        if motor_ids is None:
+            ids = sorted(self._serial_set | self._can1_set)
+            if not ids:
+                ids = sorted(set(RS05_SERIAL_IDS) | set(RS05_CAN_IDS))
+        else:
+            ids = list(motor_ids)
+
+        fixed: list[int] = []
+        failed: list[int] = []
+        for mid in ids:
+            idx = mid - 1
+            if not (0 <= idx < len(self.mode)):
+                continue
+            if self.rx_count[idx] <= 0:
+                continue
+            was_mode = int(self.mode[idx])
+            was_conn = bool(self.is_connected[idx])
+            ok = self.ensure_mit(mid, tag=tag, wait_s=wait_s)
+            if not ok:
+                # Second enable pulse — some RS00 need a longer settle.
+                self.enable(mid)
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < wait_s:
+                    if self.mode[idx] == 2:
+                        ok = True
+                        break
+                    time.sleep(0.005)
+                if ok:
+                    self.is_connected[idx] = True
+                    self._calc_pos_offset(mid)
+            if ok and self.mode[idx] == 2:
+                q = float(self.get_position(mid))
+                try:
+                    self.mit_control(
+                        mid, q, 0.0, float(hold_kp), float(hold_kd), 0.0)
+                except Exception:
+                    pass
+                if was_mode != 2 or not was_conn:
+                    fixed.append(mid)
+            else:
+                failed.append(mid)
+                print(
+                    f"[{tag}] WARNING ID{mid} 未进 MIT "
+                    f"mode={self.mode[idx]} fault={self.fault[idx]} "
+                    f"rx={self.rx_count[idx]}"
+                )
+        return fixed, failed
+
+    def print_mit_status(self, motor_ids=None, *, tag="mit") -> None:
+        """Print LZ mode/connected for diagnostics (mode==2 = MIT)."""
+        if motor_ids is None:
+            ids = sorted(self._serial_set | self._can1_set)
+            if not ids:
+                ids = sorted(set(RS05_SERIAL_IDS) | set(RS05_CAN_IDS))
+        else:
+            ids = list(motor_ids)
+        print(f"[{tag}] LZ 驱动状态:")
+        for mid in ids:
+            idx = mid - 1
+            if not (0 <= idx < len(self.mode)):
+                continue
+            mode = int(self.mode[idx])
+            rx = int(self.rx_count[idx])
+            if rx <= 0:
+                continue
+            flag = "OK" if mode == 2 and self.is_connected[idx] else "!!"
+            print(
+                f"  [{flag}] ID{mid:2d} mode={mode} "
+                f"connected={bool(self.is_connected[idx])} "
+                f"fault={int(self.fault[idx])} rx={rx}"
+            )
 
     def _hot_start_claim(self, mid, *, bus_tag, read_once, wait_s=0.08) -> bool:
         """After a probe reply: enable if mode!=2, then MIT-hold if in MIT."""

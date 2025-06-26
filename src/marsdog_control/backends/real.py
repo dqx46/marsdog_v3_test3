@@ -8,39 +8,49 @@ from marsdog_control.runtime.walk_services import WalkServices
 
 _REAL_JOINTS = [j for j in JOINT_MAP if j.bus != "none"]
 
+# 仅实机接线极性（乘在 sign×gear 之外）。仿真 / JointDesc.sign / URDF 约定不动。
+# 2026-08-07: waist_yaw(ID19) 电机正转与 URDF +yaw 相反。
+_REAL_WIRE_POLARITY: Dict[int, float] = {
+    19: -1.0,  # waist_yaw
+}
+
+
+def _wire_polarity(motor_id: int) -> float:
+    return float(_REAL_WIRE_POLARITY.get(int(motor_id), 1.0))
+
 
 def _joint_scale(j) -> float:
-    """电机角 = URDF角 × scale；scale = sign × gear_ratio (与 kinematics 同源)。"""
+    """电机角 = URDF角 × scale；scale = sign × gear_ratio × 实机接线极性。"""
     gr = float(getattr(j, "gear_ratio", 1.0) or 1.0)
-    return float(j.sign) * gr
+    return float(j.sign) * gr * _wire_polarity(j.motor_id)
 
 
 def urdf_pose_to_motor(urdf_q: Dict[int, float]) -> Dict[int, float]:
-    """URDF 空间关节位姿 -> 电机空间位姿。
+    """URDF 空间关节位姿 -> 实机电机空间位姿。
 
-    唯一真源: 与 :func:`kinematics.urdf_to_motor` 一致
-    (``m = urdf * sign * gear_ratio``, 再做电机硬限位钳制)。
-    前腿 tarsus 外置 1:2 → gear_ratio=2 必须在此生效；fade / recover /
-    shutdown 等非稳态路径也复用它, 与主控稳态循环同源。
+    基映射与 :func:`kinematics.urdf_to_motor` 同源（``sign × gear_ratio``），
+    再乘 ``_REAL_WIRE_POLARITY``（仅实机）。fade / recover / shutdown /
+    RealRobotBackend.send 共用此函数。
     """
     out: Dict[int, float] = {}
     for mid, urdf in urdf_q.items():
         j = JOINT_BY_ID.get(mid)
         if j is None:
             continue
-        m_q = urdf_to_motor(j, urdf)
+        m_q = urdf_to_motor(j, urdf) * _wire_polarity(mid)
         m_q = max(j.limit_lo, min(j.limit_hi, m_q))
         out[mid] = m_q
     return out
 
 
 def motor_pose_to_urdf(motor_q: Dict[int, float]) -> Dict[int, float]:
-    """电机空间关节位姿 -> URDF 空间位姿 (与 read_state / kinematics 互逆)。"""
+    """实机电机空间 -> URDF 空间（与 send / ``urdf_pose_to_motor`` 互逆）。"""
     out: Dict[int, float] = {}
     for mid, pos in motor_q.items():
         j = JOINT_BY_ID.get(mid)
         if j is not None and _joint_scale(j) != 0:
-            out[mid] = motor_to_urdf(j, pos)
+            # motor = urdf * sign * gear * pol  →  urdf = motor_to_urdf(motor / pol)
+            out[mid] = motor_to_urdf(j, float(pos) / _wire_polarity(mid))
         else:
             out[mid] = 0.0
     return out
@@ -151,9 +161,11 @@ class RealRobotBackend(RobotBackend):
 
             if output.trq_ff and mid in output.trq_ff:
                 gr = float(getattr(j, "gear_ratio", 1.0) or 1.0)
-                # τ_motor = τ_joint / gear_ratio, 再乘 sign 对齐方向
+                # τ_motor = τ_joint / gear_ratio, 再乘 sign×接线极性对齐方向
+                pol = _wire_polarity(mid)
                 motor_trq_ff[mid] = (
-                    output.trq_ff[mid] * float(j.sign) / gr if gr != 0 else 0.0
+                    output.trq_ff[mid] * float(j.sign) * pol / gr
+                    if gr != 0 else 0.0
                 )
 
         # 下发到服务层

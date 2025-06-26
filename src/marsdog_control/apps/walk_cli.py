@@ -125,25 +125,49 @@ def print_open_loop_params(args) -> None:
     com_m = float(getattr(args, "com_shift_m", 0.0) or 0.0)
     hz = (1.0 / period) if period > 1e-9 else 0.0
 
-    print("[show] SoftTrot 开环摘要（预设 + CLI 生效值；不上电机）")
-    print(f"  步频     T={period:.3f} s   f={hz:.2f} Hz")
-    print(f"  占空比   stance={stance:.3f}   swing={1.0 - stance:.3f}")
+    height = float(getattr(args, "height", 0) or 0)
+    leg_kp = float(getattr(args, "leg_kp_scale", 1) or 1)
+
+    print("[show] SoftTrot 开环摘要（预设 + CLI 生效值；单位与 CLI 一致；不上电机）")
+    print(f"  步频     --gait-period / --nat-period = {period:.3f}   f={hz:.2f} Hz")
+    print(f"  占空比   --stance = {stance:.3f}   swing={1.0 - stance:.3f}")
     print(
-        f"  步高     rear={step_h*1000:.1f} mm  front={step_hf*1000:.1f} mm  "
-        f"nat={nat_step*1000:.1f} mm  fwd_lift={fwd_lift*1000:.1f} mm"
+        f"  步高     --step-h={step_h:.4f}  "
+        f"--step-h-front={step_hf:.4f}  "
+        f"--nat-step-h={nat_step:.4f}  "
+        f"--fwd-front-lift={fwd_lift:.4f}"
+    )
+    print("  步高说明（值单位=m，与 CLI 一致）")
+    print("    CLI                  值(m)   说明")
+    print(
+        f"    --step-h           {step_h:8.4f}  "
+        f"通用/后腿抬腿高度"
     )
     print(
-        f"  步距     amp_front={amp_f*1000:.1f} mm  amp_rear={amp_r*1000:.1f} mm"
-        f"  （半步长；全步≈2×）"
+        f"    --step-h-front     {step_hf:8.4f}  "
+        f"前腿抬腿；未传则回退 --step-h"
     )
     print(
-        f"  落脚点   x_shift={x_shift*1000:+.1f} mm（前后）  "
-        f"y_shift={y_shift*1000:+.1f} mm（左右）  "
-        f"com_shift={com_m*1000:+.1f} mm（步态横向移重）"
+        f"    --nat-step-h       {nat_step:8.4f}  "
+        f"SoftTrot/Natural 后腿抬腿（主用）"
     )
     print(
-        f"  体高/柔顺 height={float(getattr(args, 'height', 0) or 0)*1000:.1f} mm  "
-        f"leg_kp_scale={float(getattr(args, 'leg_kp_scale', 1) or 1):.2f}"
+        f"    --fwd-front-lift   {fwd_lift:8.4f}  "
+        f"前进前腿抬腿覆盖；>0 优先"
+    )
+    print(
+        f"  步距     --amp-front={amp_f:.4f}  "
+        f"--amp-rear={amp_r:.4f}"
+        f"  （半步长 m；全步≈2×）"
+    )
+    print(
+        f"  落脚点   --x-shift={x_shift:+.4f}（前后）  "
+        f"--y-shift={y_shift:+.4f}（左右）  "
+        f"--com-shift={com_m:+.4f}（步态横向移重）"
+    )
+    print(
+        f"  体高/柔顺 --height={height:.4f}  "
+        f"--leg-kp-scale={leg_kp:.2f}"
     )
     print("[show] 完成。改参后可再跑: ./run_walk.sh --no-tail --show")
 

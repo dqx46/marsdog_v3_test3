@@ -302,6 +302,12 @@ def bringup_motors_and_board(
                 lz.enable(j.motor_id)
                 clock.sleep(0.002)
         clock.sleep(0.05)
+        # enable 后立刻 MIT 认领锁位（与 hot 同源 claim_mit_all）。
+        cold_fixed, cold_failed = lz.claim_mit_all(tag="init/cold")
+        if cold_fixed:
+            print(f"[init] cold-start MIT claim: {cold_fixed}")
+        if cold_failed:
+            print(f"[init] cold-start MIT FAILED: {cold_failed}")
         for _attempt in range(5):
             not_enabled = []
             for j in joint_map:
@@ -314,31 +320,31 @@ def bringup_motors_and_board(
             if not not_enabled:
                 break
             clock.sleep(0.05)
-        clock.sleep(0.4)
+        # 冷启也起保位线程：桥接 enable → 应用 pose_hold，避免 Incos 500ms 超时掉刚度。
+        if holder is None:
+            holder = _HotStartHold(joint_map)
+            holder.bind(
+                lz=lz, evo=evo, incos=incos, dm=dm, dm_targets=dm_fixed_targets)
+            holder.start()
+            holder.kick()
+        clock.sleep(0.05)
     else:
-        # Hot-start: do not blanket-enable (would clear MIT hold on healthy motors).
-        # Only enable LZ responders that are not already in MIT (mode!=2).
-        fixed = []
-        for j in joint_map:
-            if j.mtype != "lz":
-                continue
-            idx = j.motor_id - 1
-            if not (0 <= idx < len(lz.mode)):
-                continue
-            if lz.rx_count[idx] <= 0 or lz.mode[idx] == 2:
-                continue
-            if lz.ensure_mit(j.motor_id, tag="init/hot"):
-                q = lz.get_position(j.motor_id)
-                lz.mit_control(j.motor_id, q, 0.0, 80.0, 4.0, 0.0)
-                fixed.append(j.motor_id)
-            else:
-                print(
-                    f"[init] WARNING LZ ID{j.motor_id} still "
-                    f"mode={lz.mode[idx]} after enable"
-                )
+        # Hot-start: claim any LZ with feedback that is not yet MIT; also latch
+        # a stiff MIT frame on already-MIT motors (probe can leave them soft).
+        fixed, failed = lz.claim_mit_all(tag="init/hot")
         if fixed:
-            print(f"[init] hot-start re-enable mode!=2: {fixed}")
-        else:
+            print(f"[init] hot-start MIT claim: {fixed}")
+        if failed:
+            print(f"[init] hot-start MIT FAILED: {failed}")
+        responders = sum(
+            1 for j in joint_map
+            if j.mtype == "lz"
+            and 0 <= (j.motor_id - 1) < len(lz.rx_count)
+            and lz.rx_count[j.motor_id - 1] > 0
+        )
+        if responders == 0:
+            print("[init] hot-start: 尚无 LZ 反馈（rx=0）")
+        elif not fixed and not failed:
             print("[init] skip re-enable（LZ 均已 MIT mode=2；保位线程维持刚度）")
         clock.sleep(0.02)
 
@@ -368,6 +374,17 @@ def bringup_motors_and_board(
         return None
 
     print(f"\n[online] {len(online)}/{len(all_ids)} 电机在线\n")
+    if lz is not None:
+        lz_ids = [j.motor_id for j in joint_map if j.mtype == "lz"]
+        # Final MIT latch after all buses open (recv may have updated late).
+        late_fixed, late_failed = lz.claim_mit_all(lz_ids, tag="init/final")
+        if late_fixed:
+            print(f"[init] final MIT claim: {late_fixed}")
+        if late_failed:
+            print(f"[init] final MIT FAILED: {late_failed}")
+        lz.print_mit_status(lz_ids, tag="mit")
+        # Recompute online — claim may have marked newly MIT motors connected.
+        online = sorted(board.online_ids())
     if holder is not None:
         holder.kick()
         _seed_hot_start_hold(lz, evo, dm, incos, board)

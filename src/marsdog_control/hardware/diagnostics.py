@@ -74,6 +74,7 @@ def find_lz_recoverable_faults(lz, joints, targets, *,
 
     LZ 偶发会出现"有反馈、mode 看似正常, 但几乎不出力且目标误差很大"的状态。
     这和通信离线不同；最新日志里的 rl_calf(ID11) 就是这种形态。判据保守地要求:
+      - mode != 2（未进 MIT）; 或
       - 显式 disabled 或 fault != 0; 或
       - 目标误差很大且扭矩反馈接近 0。
     """
@@ -87,10 +88,16 @@ def find_lz_recoverable_faults(lz, joints, targets, *,
         idx = mid - 1
         enabled = bool(lz.is_enabled[idx])
         fault = int(lz.fault[idx])
+        mode = int(lz.mode[idx])
         actual = lz.get_position(mid)
         err = abs(targets[mid] - actual)
         torque = abs(lz.torque[idx])
-        if (not enabled) or fault != 0 or (err > max_error_rad and torque < low_torque_nm):
+        if (
+            mode != 2
+            or (not enabled)
+            or fault != 0
+            or (err > max_error_rad and torque < low_torque_nm)
+        ):
             faults.append(j)
     return faults
 
@@ -131,6 +138,10 @@ def recover_lz_stand_faults(
             print(f"[recover] clear fault + enable M{j.motor_id}({j.name}) "
                   f"attempt {attempt}/{attempts}")
             lz.re_enable(j.motor_id)
+            # re_enable 末尾是零增益 MIT；立刻用当前位置锁一帧，避免空窗无力。
+            if lz.ensure_mit(j.motor_id, tag="recover"):
+                q = float(lz.get_position(j.motor_id))
+                lz.mit_control(j.motor_id, q, 0.0, 80.0, 4.0, 0.0)
             time.sleep(0.03)
 
         cur = read_positions_fn(lz, evo, incos)

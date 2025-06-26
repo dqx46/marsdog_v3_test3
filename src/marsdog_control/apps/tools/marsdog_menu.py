@@ -3,7 +3,7 @@
 
 整合:
   1) static_test       总线体检（不使能）
-  2) go_zero           平滑回零（默认 3s，全轴含达妙/头）
+  2) go_zero           平滑回零（默认 3s，冷启进 MIT，全轴含达妙/头）
   3) set_zero_selected 指定 ID 设零（默认写 Flash）
   4) sim_com_balance   CoM 站立 / 移重（默认真机 + 对角抬腿）
   5) capture_pose      捕获 sit / lie 姿态
@@ -76,11 +76,12 @@ def _menu_static_test() -> int:
 def _menu_go_zero() -> int:
     print(
         "\n[平滑回零] 渐变 3s → 全轴到 0（含达妙/头）；"
+        "冷启 clear_fault 进 MIT；"
         "增益=run_walk SoftTrot JOINT_GAINS×leg_kp_scale+trq_ff。"
     )
     return _run_module(
         "marsdog_control.apps.tools.calibration.go_zero",
-        ["--fade", "3", "--include-head"],
+        ["--fade", "3", "--include-head", "--soft-disable"],
     )
 
 
