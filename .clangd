@@ -1,0 +1,11 @@
+CompileFlags:
+  # colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON 后自动读取
+  CompilationDatabase: build
+
+Diagnostics:
+  UnusedIncludes: Strict
+
+InlayHints:
+  Enabled: Yes
+  ParameterNames: Yes
+  DeducedTypes: Yes

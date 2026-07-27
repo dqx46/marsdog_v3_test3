@@ -1,0 +1,6 @@
+{
+  "comment": "电机软件标定偏置（rad）。用于补偿 Flash 写入失败的老固件电机。",
+  "comment2": "格式: motor_id(字符串): 零位时该电机的 raw mechPos 读数(rad)。",
+  "offsets": {
+  }
+}

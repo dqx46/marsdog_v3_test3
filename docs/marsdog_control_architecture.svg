@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#2F5496"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#5B5B5B"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#548235"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#C65911"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#C00000"/>
+    </marker>
+    <style>
+      .title { font: 700 22px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #1F4E79; }
+      .h { font: 700 13px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #1F1F1F; }
+      .t { font: 12px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #1F1F1F; }
+      .s { font: 11px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #333; }
+      .note { font: 12px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #5A4500; }
+      .band { font: 700 12px "Microsoft YaHei", "Segoe UI", sans-serif; fill: #1F1F1F; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1100" fill="#FAFBFC"/>
+  <rect x="40" y="24" width="1520" height="52" rx="8" fill="#D6DCE4" stroke="#1F4E79" stroke-width="2"/>
+  <text x="800" y="56" text-anchor="middle" class="title">Marsdog Control èF∂  |  marsdog_control + mocap_to_real</text>
+
+  <!-- Entry -->
+  <rect x="60" y="100" width="300" height="70" rx="8" fill="#FFF2CC" stroke="#BF8F00" stroke-width="2"/>
+  <text x="210" y="128" text-anchor="middle" class="h">e„ apps/walk.py</text>
+  <text x="210" y="150" text-anchor="middle" class="t">RuntimeApp</text>
+
+  <rect x="420" y="100" width="320" height="70" rx="8" fill="#FCE4D6" stroke="#C65911" stroke-width="2"/>
+  <text x="580" y="128" text-anchor="middle" class="h">ÿ§ --legacy-loop</text>
+  <text x="580" y="150" text-anchor="middle" class="t">mocap_to_real/walk.main</text>
+
+  <rect x="800" y="100" width="320" height="70" rx="8" fill="#E2EFDA" stroke="#548235" stroke-width="1.5"/>
+  <text x="960" y="128" text-anchor="middle" class="h">--no-legacy-loop</text>
+  <text x="960" y="150" text-anchor="middle" class="t">RuntimePipeline*•°	</text>
+
+  <rect x="1170" y="100" width="270" height="70" rx="8" fill="#EDEDED" stroke="#666" stroke-width="1.5"/>
+  <text x="1305" y="128" text-anchor="middle" class="h">compat.py</text>
+  <text x="1305" y="150" text-anchor="middle" class="t">∞Á import +</text>
+
+  <!-- Runtime / config -->
+  <rect x="60" y="210" width="300" height="78" rx="8" fill="#DDEBF7" stroke="#2F5496" stroke-width="2"/>
+  <text x="210" y="240" text-anchor="middle" class="h">runtime/</text>
+  <text x="210" y="262" text-anchor="middle" class="t">FSM ∑ startup ∑ shutdown</text>
+
+  <rect x="420" y="210" width="320" height="78" rx="8" fill="#DDEBF7" stroke="#2F5496" stroke-width="1.5"/>
+  <text x="580" y="240" text-anchor="middle" class="h">config/</text>
+  <text x="580" y="262" text-anchor="middle" class="t">schema ∑ joints ∑ devices</text>
+
+  <rect x="800" y="210" width="320" height="78" rx="8" fill="#D6DCE4" stroke="#405E7A" stroke-width="2"/>
+  <text x="960" y="235" text-anchor="middle" class="h">core/types</text>
+  <text x="960" y="255" text-anchor="middle" class="s">RobotState ∑ UserCommand</text>
+  <text x="960" y="273" text-anchor="middle" class="s">MotionTarget ∑ ControlOutput</text>
+
+  <rect x="1170" y="210" width="270" height="78" rx="8" fill="#DDEBF7" stroke="#2F5496" stroke-width="1.5"/>
+  <text x="1305" y="240" text-anchor="middle" class="h">io/</text>
+  <text x="1305" y="262" text-anchor="middle" class="t">input ∑ logging</text>
+
+  <line x1="210" y1="170" x2="210" y2="210" stroke="#5B5B5B" stroke-width="2" marker-end="url(#arrowGray)"/>
+  <line x1="580" y1="170" x2="580" y2="210" stroke="#C65911" stroke-width="2" marker-end="url(#arrowOrange)"/>
+
+  <!-- Pipeline band -->
+  <rect x="60" y="318" width="1380" height="34" rx="6" fill="#FFF2CC" stroke="#BF8F00" stroke-width="1.5"/>
+  <text x="750" y="340" text-anchor="middle" class="band">˙öûˆ°ø RuntimePipeline.tick()Ó∂Ñ:ÿ§Õp legacy ™ØÖI˜e§	</text>
+
+  <!-- Pipeline boxes -->
+  <g id="pipeline">
+    <rect x="60" y="370" width="160" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="140" y="405" text-anchor="middle" class="h">1 Input</text>
+    <text x="140" y="428" text-anchor="middle" class="t">poll }‰</text>
+
+    <rect x="260" y="370" width="160" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="340" y="405" text-anchor="middle" class="h">2 FSM</text>
+    <text x="340" y="428" text-anchor="middle" class="t">!l˚</text>
+
+    <rect x="460" y="370" width="160" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="540" y="405" text-anchor="middle" class="h">3 Balance</text>
+    <text x="540" y="428" text-anchor="middle" class="t">IMU s</text>
+
+    <rect x="660" y="370" width="160" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="740" y="405" text-anchor="middle" class="h">4 Motion</text>
+    <text x="740" y="428" text-anchor="middle" class="t">≥Ôh˘+IK</text>
+
+    <rect x="860" y="370" width="160" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="940" y="405" text-anchor="middle" class="h">5 Safety</text>
+    <text x="940" y="428" text-anchor="middle" class="t">PM/T</text>
+
+    <rect x="1060" y="370" width="160" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="1140" y="405" text-anchor="middle" class="h">6 Executor</text>
+    <text x="1140" y="428" text-anchor="middle" class="t">û +Mà</text>
+
+    <rect x="1260" y="370" width="180" height="88" rx="8" fill="#BDD7EE" stroke="#2F5496" stroke-width="2"/>
+    <text x="1350" y="405" text-anchor="middle" class="h">7 Hardware</text>
+    <text x="1350" y="428" text-anchor="middle" class="t">send MIT</text>
+  </g>
+
+  <line x1="220" y1="414" x2="260" y2="414" stroke="#2F5496" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="420" y1="414" x2="460" y2="414" stroke="#2F5496" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="620" y1="414" x2="660" y2="414" stroke="#2F5496" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="820" y1="414" x2="860" y2="414" stroke="#2F5496" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1020" y1="414" x2="1060" y2="414" stroke="#2F5496" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1220" y1="414" x2="1260" y2="414" stroke="#2F5496" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="210" y1="288" x2="140" y2="370" stroke="#5B5B5B" stroke-width="2" marker-end="url(#arrowGray)"/>
+
+  <!-- Motion -->
+  <rect x="60" y="490" width="1380" height="30" rx="6" fill="#C6EFCE" stroke="#548235" stroke-width="1.5"/>
+  <text x="750" y="510" text-anchor="middle" class="band">motion/  e–®f</text>
+
+  <rect x="60" y="535" width="300" height="80" rx="8" fill="#E2EFDA" stroke="#548235" stroke-width="1.5"/>
+  <text x="210" y="565" text-anchor="middle" class="h">gait_recipes.py</text>
+  <text x="210" y="588" text-anchor="middle" class="t">Ñæ / ControllerSet</text>
+
+  <rect x="400" y="535" width="340" height="80" rx="8" fill="#C6EFCE" stroke="#375623" stroke-width="2"/>
+  <text x="570" y="560" text-anchor="middle" class="h">gait_controller.py</text>
+  <text x="570" y="582" text-anchor="middle" class="t">_leg_xz / _swing_z</text>
+  <text x="570" y="602" text-anchor="middle" class="t">≥Ôh˘ƒ</text>
+
+  <rect x="780" y="535" width="300" height="80" rx="8" fill="#E2EFDA" stroke="#548235" stroke-width="1.5"/>
+  <text x="930" y="565" text-anchor="middle" class="h">kinematics.py</text>
+  <text x="930" y="588" text-anchor="middle" class="t">M3˛ / 2D IK</text>
+
+  <rect x="1120" y="535" width="320" height="80" rx="8" fill="#E2EFDA" stroke="#548235" stroke-width="1.5"/>
+  <text x="1280" y="565" text-anchor="middle" class="h">motion_planner.py</text>
+  <text x="1280" y="588" text-anchor="middle" class="t">blend ∑ P</text>
+
+  <line x1="740" y1="458" x2="570" y2="535" stroke="#548235" stroke-width="2" marker-end="url(#arrowGreen)"/>
+
+  <!-- Control / Safety -->
+  <rect x="60" y="650" width="420" height="80" rx="8" fill="#F8CBAD" stroke="#C65911" stroke-width="1.5"/>
+  <text x="270" y="680" text-anchor="middle" class="h">control/</text>
+  <text x="270" y="702" text-anchor="middle" class="t">imu_balance ∑ gravity_comp ∑ impedance ∑ executor</text>
+
+  <rect x="520" y="650" width="340" height="80" rx="8" fill="#FF6B6B" stroke="#C00000" stroke-width="2"/>
+  <text x="690" y="680" text-anchor="middle" class="h">safety/supervisor</text>
+  <text x="690" y="702" text-anchor="middle" class="t">PM ∑ Ûÿ ∑ ESTOP</text>
+
+  <rect x="900" y="650" width="540" height="80" rx="8" fill="#EDEDED" stroke="#7F7F7F" stroke-width="1.5"/>
+  <text x="1170" y="680" text-anchor="middle" class="h">ÑY backends/ ∑ policies/</text>
+  <text x="1170" y="702" text-anchor="middle" class="t">ˇ ∑ ﬁ> ∑ RL*û∞	</text>
+
+  <line x1="940" y1="458" x2="690" y2="650" stroke="#C00000" stroke-width="2" marker-end="url(#arrowRed)"/>
+  <line x1="1140" y1="458" x2="270" y2="650" stroke="#C65911" stroke-width="2" marker-end="url(#arrowOrange)"/>
+
+  <!-- Hardware -->
+  <rect x="60" y="760" width="1380" height="30" rx="6" fill="#D9E2F3" stroke="#2F5496" stroke-width="1.5"/>
+  <text x="750" y="780" text-anchor="middle" class="band">hardware/  q®L:</text>
+
+  <rect x="60" y="805" width="240" height="80" rx="8" fill="#DDEBF7" stroke="#2F5496" stroke-width="1.5"/>
+  <text x="180" y="835" text-anchor="middle" class="h">motors/</text>
+  <text x="180" y="858" text-anchor="middle" class="t">u≥∑EVO∑æô ∑ CAN</text>
+
+  <rect x="330" y="805" width="220" height="80" rx="8" fill="#DDEBF7" stroke="#2F5496" stroke-width="1.5"/>
+  <text x="440" y="835" text-anchor="middle" class="h">sensors/</text>
+  <text x="440" y="858" text-anchor="middle" class="t">WT901 IMU</text>
+
+  <rect x="580" y="805" width="220" height="80" rx="8" fill="#BDD7EE" stroke="#1F4E79" stroke-width="2"/>
+  <text x="690" y="835" text-anchor="middle" class="h">robot_hw</text>
+  <text x="690" y="858" text-anchor="middle" class="t">read_state</text>
+
+  <rect x="830" y="805" width="220" height="80" rx="8" fill="#BDD7EE" stroke="#1F4E79" stroke-width="2"/>
+  <text x="940" y="835" text-anchor="middle" class="h">actuation</text>
+  <text x="940" y="858" text-anchor="middle" class="t">send_all</text>
+
+  <rect x="1080" y="805" width="360" height="80" rx="8" fill="#DDEBF7" stroke="#2F5496" stroke-width="1.5"/>
+  <text x="1260" y="835" text-anchor="middle" class="h">behavior/</text>
+  <text x="1260" y="858" text-anchor="middle" class="t">tail ∑ audio</text>
+
+  <line x1="1350" y1="458" x2="940" y2="805" stroke="#2F5496" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="1350" y1="458" x2="690" y2="805" stroke="#2F5496" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Notes -->
+  <rect x="60" y="920" width="1380" height="140" rx="8" fill="#FFFBF0" stroke="#BF8F00" stroke-width="1.5"/>
+  <text x="90" y="955" class="note">pnQ¶RobotState í UserCommand í FSM í MotionTarget í Safety í ControlOutput(MIT) í 5:</text>
+  <text x="90" y="985" class="note">¡˚∂û∞( src/marsdog_control:;™Øÿ§Õ( mocap_to_real/walk.py</text>
+  <text x="90" y="1015" class="note">å¡tests/parity ƒ—Îg˘Õ motion/executor</text>
+  <text x="90" y="1045" class="note">S πVisio í áˆ í S  í 	, SVGS ÓU .vsdxÊX: .vsdx sÔëÙ§</text>
+</svg>

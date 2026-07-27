@@ -1,0 +1,18 @@
+# CI 门禁 —— 待仓库注册 runner 后自动生效; 本地已可用同一脚本:
+#   ./scripts/check.sh
+#
+# 只跑离线检查(compileall/pyflakes/unittest/parity/coverage), 不接触真机总线,
+# 可以在任意跑 Python 3.9+ 的 runner(不需要 CAN/串口硬件)上执行。
+stages:
+  - check
+
+quality-gate:
+  stage: check
+  image: python:3.10-slim
+  before_script:
+    - pip install --no-cache-dir pyflakes coverage
+  script:
+    - chmod +x scripts/check.sh
+    - ./scripts/check.sh
+  rules:
+    - when: always

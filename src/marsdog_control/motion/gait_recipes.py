@@ -1,0 +1,610 @@
+"""集中管理站姿配置和步态预设。
+
+目标是把 sim_walk.py / walk.py / 调试工具里散落的关键默认值收敛到这里。
+这里不包含控制循环，也不直接依赖 MuJoCo，方便实机和仿真共同导入。
+"""
+
+from __future__ import annotations
+
+# [解耦] 真实实现已从 mocap_to_real 下沉到此 src 模块; 函数内的扁平 import
+# (from gait_controller import ...) 由 ensure_legacy_path() 保证可解析。
+from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
+_ensure_legacy_path()
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+
+from marsdog_control.config.stack_build import GaitStackConfig
+
+if TYPE_CHECKING:
+    from marsdog_control.motion.gait_controller import GaitController
+
+
+@dataclass(frozen=True)
+class StandingPoseConfig:
+    body_height: float
+    x_offset_front: float
+    x_offset_rear: float
+    hip_abduction: float
+    use_tarsus: bool
+    waist_pitch_offset: float = 0.0
+    waist_yaw_offset: float = 0.0
+    front_stand_foot_pitch_deg: Optional[float] = None
+    front_stand_tarsus_deg: float = 0.0
+
+    # 2026-07-11: 唯一站姿=新三连杆带前腿主动 tarsus 站姿, 脚段默认 -90°(竖直指地)。
+    _DEFAULT_FOOT_PITCH_DEG = -90.0
+
+    @classmethod
+    def from_config(
+        cls, cfg: GaitStackConfig, *, front_x0: float, rear_x0: float,
+    ) -> "StandingPoseConfig":
+        foot_pitch_deg = cfg.front_stand_foot_pitch_deg
+        if foot_pitch_deg is None:
+            foot_pitch_deg = cls._DEFAULT_FOOT_PITCH_DEG
+        return cls(
+            body_height=cfg.height,
+            x_offset_front=front_x0 + cfg.x_shift,
+            x_offset_rear=rear_x0 + cfg.x_shift,
+            hip_abduction=cfg.hip_abd,
+            use_tarsus=True,
+            waist_pitch_offset=cfg.waist_pitch,
+            waist_yaw_offset=cfg.waist_yaw_offset,
+            front_stand_foot_pitch_deg=foot_pitch_deg,
+            front_stand_tarsus_deg=cfg.front_stand_tarsus_deg,
+        )
+
+    @classmethod
+    def from_args(cls, args, *, front_x0: float, rear_x0: float) -> "StandingPoseConfig":
+        """Compat wrapper — prefer :meth:`from_config`."""
+        if isinstance(args, GaitStackConfig):
+            return cls.from_config(args, front_x0=front_x0, rear_x0=rear_x0)
+        return cls.from_config(
+            GaitStackConfig.from_args(args), front_x0=front_x0, rear_x0=rear_x0)
+
+    def build_stand_controller(self, hip_abduction_override: Optional[float] = None):
+        from marsdog_control.motion.gait_controller import StandController
+
+        stand = StandController(
+            body_height=self.body_height,
+            x_offset_front=self.x_offset_front,
+            x_offset_rear=self.x_offset_rear,
+            hip_abduction=(
+                hip_abduction_override if hip_abduction_override is not None
+                else self.hip_abduction
+            ),
+            use_tarsus=self.use_tarsus,
+            front_stand_tarsus_deg=self.front_stand_tarsus_deg,
+            front_stand_foot_pitch_deg=self.front_stand_foot_pitch_deg,
+        )
+        stand.waist_pitch_offset = self.waist_pitch_offset
+        stand.waist_yaw_offset = self.waist_yaw_offset
+        return stand
+
+
+@dataclass(frozen=True)
+class ControllerSet:
+    stand: "GaitController"
+    fwd: "GaitController"
+    bwd: "GaitController"
+    pace_fwd: "GaitController"
+    pace_bwd: "GaitController"
+    nat_fwd: "GaitController"
+
+    def as_tuple(self):
+        return self.stand, self.fwd, self.bwd, self.pace_fwd, self.pace_bwd, self.nat_fwd
+
+
+def apply_turn_params(controller, cfg: GaitStackConfig) -> None:
+    controller.max_turn_amp_diff = cfg.turn_amp_diff
+    controller.max_turn_y_amp = cfg.turn_y_amp
+    controller.turn_filter_alpha = cfg.turn_smooth
+    controller.max_turn_waist_yaw = cfg.turn_waist_yaw
+    controller.waist_yaw_turn_sign = cfg.waist_yaw_turn_sign
+
+
+def _set_waist_offsets(controller, cfg: GaitStackConfig) -> None:
+    controller.waist_pitch_offset = cfg.waist_pitch
+    controller.waist_yaw_offset = cfg.waist_yaw_offset
+
+
+def _as_gait_stack_config(args_or_cfg: Union[GaitStackConfig, Any]) -> GaitStackConfig:
+    if isinstance(args_or_cfg, GaitStackConfig):
+        return args_or_cfg
+    return GaitStackConfig.from_args(args_or_cfg)
+
+
+def build_controller_set(
+    args_or_cfg,
+    *,
+    front_x0: float,
+    rear_x0: float,
+    natural_params: Optional[dict] = None,
+    natural_spine_yaw_deg: Optional[float] = None,
+    natural_spine_roll_deg: Optional[float] = None,
+    apply_turn: bool = True,
+    pace_use_stand_offsets: bool = True,
+) -> ControllerSet:
+    """构造 stand/trot/pace/natural 控制器组。
+
+    首选传入 :class:`GaitStackConfig`；仍接受 CLI Namespace（内部一次性快照）。
+    这里只负责控制器对象和共享参数，不处理仿真/实机 IO、effort override、
+    IMU、键盘/手柄等运行时逻辑。
+    """
+    from marsdog_control.motion.gait_controller import (
+        StablePace, StableTrot, NaturalTrot, NaturalSoftTrot)
+
+    cfg = _as_gait_stack_config(args_or_cfg)
+    stand_cfg = StandingPoseConfig.from_config(cfg, front_x0=front_x0, rear_x0=rear_x0)
+    xf = stand_cfg.x_offset_front
+    xr = stand_cfg.x_offset_rear
+
+    bwd_scale = cfg.bwd_amp_scale
+    if cfg.fwd_use_bwd:
+        fwd_amp_front = cfg.amp_rear * bwd_scale
+        fwd_amp_rear = cfg.amp_front * bwd_scale
+        fwd_step_h = cfg.bwd_step_h
+        fwd_step_h_front = cfg.bwd_step_h * 0.75
+        fwd_period = cfg.bwd_period
+        fwd_hip_abd = cfg.hip_abd + 0.01
+    else:
+        fwd_amp_front = cfg.amp_front
+        fwd_amp_rear = cfg.amp_rear
+        fwd_step_h = cfg.step_h
+        fwd_step_h_front = cfg.step_h_front if cfg.step_h_front else cfg.step_h * 0.75
+        fwd_period = cfg.period
+        fwd_hip_abd = cfg.hip_abd
+
+    # stand 的髋外展必须和 fwd/nat_fwd 的起始姿态一致 (fwd_use_bwd 会给 fwd_hip_abd
+    # 加 0.01rad), 否则 assert_stand_matches_gait_start 会在 rl_hip/rr_hip 上报不一致。
+    stand = stand_cfg.build_stand_controller(hip_abduction_override=fwd_hip_abd)
+
+    fwd_amp_front *= cfg.fwd_front_amp_scale
+    if cfg.fwd_front_lift > 1e-6:
+        fwd_step_h_front = cfg.fwd_front_lift
+
+    common = dict(
+        body_height=cfg.height,
+        stance_ratio=cfg.stance,
+        ramp_duration=cfg.ramp,
+        reactive_kp=cfg.reactive_kp,
+        reactive_kd=cfg.reactive_kd,
+        lateral_sway=cfg.lateral_sway,
+        front_thrust_gain=cfg.front_thrust_gain,
+        front_thrust_swing_gain=cfg.front_thrust_swing_gain,
+        front_tarsus_push=cfg.front_tarsus_push,
+        front_foot_track_deg=cfg.front_foot_track_deg,
+        front_foot_stance_push_deg=cfg.front_foot_stance_push_deg,
+        front_foot_swing_track=cfg.front_foot_swing_track,
+        front_stand_tarsus_deg=cfg.front_stand_tarsus_deg,
+        front_stand_foot_pitch_deg=cfg.front_stand_foot_pitch_deg,
+        swing_clearance_per_rad=cfg.swing_clearance_per_rad,
+        x_offset_front=xf,
+        x_offset_rear=xr,
+        anti_roll=cfg.anti_roll,
+        trot_roll_ff_neg_deg=cfg.trot_roll_ff_neg_deg,
+        trot_roll_ff_pos_deg=cfg.trot_roll_ff_pos_deg,
+        anti_roll_asym_neg=cfg.anti_roll_asym_neg,
+        anti_roll_asym_pos=cfg.anti_roll_asym_pos,
+    )
+
+    fwd = StableTrot(
+        amp_front=fwd_amp_front,
+        amp_rear=fwd_amp_rear,
+        step_height=fwd_step_h,
+        step_height_front=fwd_step_h_front,
+        period=fwd_period,
+        hip_abduction=fwd_hip_abd,
+        **common,
+    )
+    bwd = StableTrot(
+        amp_front=-cfg.amp_rear * bwd_scale,
+        amp_rear=-cfg.amp_front * bwd_scale,
+        step_height=cfg.bwd_step_h,
+        step_height_front=cfg.bwd_step_h * 0.75,
+        period=cfg.bwd_period,
+        hip_abduction=cfg.hip_abd + 0.01,
+        **common,
+    )
+
+    pace_common = dict(
+        body_height=cfg.height,
+        step_height=cfg.pace_step_h,
+        step_height_front=cfg.pace_step_h,
+        period=cfg.pace_period,
+        stance_ratio=cfg.pace_stance,
+        hip_abduction=cfg.pace_hip_abd,
+        ramp_duration=cfg.ramp,
+        reactive_kp=cfg.reactive_kp,
+        reactive_kd=cfg.reactive_kd,
+        lateral_sway=cfg.pace_sway,
+    )
+    if pace_use_stand_offsets:
+        pace_common.update(x_offset_front=xf, x_offset_rear=xr)
+    pace_fwd = StablePace(amp_front=cfg.pace_amp, amp_rear=cfg.pace_amp, **pace_common)
+    pace_bwd = StablePace(amp_front=-cfg.pace_amp, amp_rear=-cfg.pace_amp, **pace_common)
+
+    np = natural_params
+    nat_amp_front = (
+        np["amp_front"] if np and "amp_front" in np else cfg.nat_amp_front
+    )
+    nat_amp_rear = (
+        np["amp_rear"] if np and "amp_rear" in np else cfg.nat_amp_rear
+    )
+    nat_period = (
+        np["period"] if np and "period" in np else cfg.nat_period
+    )
+    nat_step_h = (
+        np["step_h"] if np and "step_h" in np else cfg.nat_step_h
+    )
+    nat_step_h_front = (
+        np["step_h_front"]
+        if np and "step_h_front" in np
+        else (cfg.fwd_front_lift if cfg.fwd_front_lift > 1e-6 else nat_step_h * 0.75)
+    )
+    nat_common = dict(common)
+    if np:
+        nat_common.update(
+            lateral_sway=np.get("lateral_sway", nat_common["lateral_sway"]),
+            anti_roll=np.get("anti_roll", nat_common["anti_roll"]),
+            trot_roll_ff_neg_deg=np.get("trot_roll_ff_neg_deg", nat_common["trot_roll_ff_neg_deg"]),
+            trot_roll_ff_pos_deg=np.get("trot_roll_ff_pos_deg", nat_common["trot_roll_ff_pos_deg"]),
+            anti_roll_asym_neg=np.get("anti_roll_asym_neg", nat_common["anti_roll_asym_neg"]),
+            anti_roll_asym_pos=np.get("anti_roll_asym_pos", nat_common["anti_roll_asym_pos"]),
+            front_tarsus_push=0.0,
+            front_thrust_gain=1.0,
+            front_thrust_swing_gain=1.0,
+            front_foot_swing_track=0.0,
+            front_stand_foot_pitch_deg=(
+                cfg.front_stand_foot_pitch_deg
+                if cfg.front_stand_foot_pitch_deg is not None
+                else np.get("front_stand_foot_pitch_deg")
+            ),
+        )
+
+    natural_cls = NaturalSoftTrot if cfg.natural_soft_trot else NaturalTrot
+    natural_extra = {}
+    if natural_cls is NaturalSoftTrot:
+        natural_extra.update(
+            touchdown_compress=(
+                np.get("touchdown_compress", cfg.touchdown_compress)
+                if np else cfg.touchdown_compress
+            ),
+            anti_roll_soft_scale=(
+                np.get("anti_roll_soft_scale", cfg.anti_roll_soft_scale)
+                if np else cfg.anti_roll_soft_scale
+            ),
+            toeoff_lift=(
+                np.get("toeoff_lift", cfg.toeoff_lift)
+                if np else cfg.toeoff_lift
+            ),
+            retract_peak=(
+                np.get("retract_peak", cfg.retract_peak)
+                if np else cfg.retract_peak
+            ),
+            lift_peak=(
+                np.get("lift_peak", cfg.lift_peak)
+                if np else cfg.lift_peak
+            ),
+            rear_clearance_m=(
+                np.get("rear_clearance_m", getattr(cfg, "rear_clearance_m", 0.0))
+                if np else getattr(cfg, "rear_clearance_m", 0.0)
+            ),
+        )
+
+    nat_fwd = natural_cls(
+        amp_front=nat_amp_front,
+        amp_rear=nat_amp_rear,
+        step_height=nat_step_h,
+        step_height_front=nat_step_h_front,
+        period=nat_period,
+        hip_abduction=fwd_hip_abd,
+        spine_yaw_deg=(
+            cfg.spine_yaw_deg
+            if natural_spine_yaw_deg is None
+            else natural_spine_yaw_deg
+        ),
+        spine_roll_deg=(
+            cfg.spine_roll_deg
+            if natural_spine_roll_deg is None
+            else natural_spine_roll_deg
+        ),
+        spine_phase_deg=cfg.spine_phase_deg,
+        thigh_swing_front_deg=cfg.thigh_swing_front_deg,
+        thigh_swing_rear_deg=cfg.thigh_swing_rear_deg,
+        retract_front=cfg.retract_front,
+        retract_rear=cfg.retract_rear,
+        tarsus_swing_deg=cfg.tarsus_swing_deg,
+        **natural_extra,
+        **nat_common,
+    )
+
+    for controller in (fwd, bwd, pace_fwd, pace_bwd, nat_fwd):
+        _set_waist_offsets(controller, cfg)
+    if apply_turn:
+        for controller in (fwd, bwd, nat_fwd):
+            apply_turn_params(controller, cfg)
+
+    return ControllerSet(stand, fwd, bwd, pace_fwd, pace_bwd, nat_fwd)
+
+
+SIM_PREVIEW_BASE = {
+    "height": 0.24,
+    "leg_kp_scale": 1.0,
+    "var_impedance": False,
+    "gravity_comp": False,
+    "fwd_use_bwd": False,
+    "fwd_front_amp_scale": 1.0,
+    "lateral_sway": 0.006,
+    "stance": 0.60,
+    "ff_decouple": True,
+    "auto_trim": False,
+    "anti_roll": 0.014,
+    "anti_roll_asym_neg": 1.30,
+    "anti_roll_asym_pos": 0.85,
+    "step_h": 0.012,
+    "trot_roll_ff_neg_deg": 2.6,
+    "trot_roll_ff_pos_deg": 2.2,
+    "front_thrust_gain": 1.0,
+    "front_thrust_swing_gain": 1.0,
+    "front_tarsus_push": 0.0,
+    "front_foot_track_deg": -78.0,
+    "front_foot_stance_push_deg": 6.0,
+    "front_stand_foot_pitch_deg": -90.0,
+    "swing_clearance_per_rad": 0.35,
+    "imu_kp": 0.035,
+    "imu_predict_ms": 10.0,        # 额外执行提前量；总预测由 angle age 动态补足
+    "imu_slew_mm_s": 120.0,
+    "max_corr_mm": 15.0,
+    "imu_phase_gate": True,
+    "td_imu_freeze_i": True,
+}
+
+
+SIM_PREVIEW_NATURAL_TROT = {
+    "lateral_sway": 0.010,
+    "anti_roll": 0.022,
+    "spine_yaw_deg": 0.0,
+    "spine_roll_deg": 0.0,
+    "imu_kp": 0.055,
+    "max_corr_mm": 20.0,
+    "imu_slew_mm_s": 110.0,
+    "imu_phase_td_gain": 0.30,
+    "imu_phase_swing_gain": 0.65,
+    "nat_step_h": 0.022,
+    "fwd_front_lift": 0.020,
+    "nat_amp_rear": 0.012,
+    "anti_roll_asym_neg": 1.15,
+    "anti_roll_asym_pos": 0.92,
+    "front_foot_stance_push_deg": 14.0,
+}
+
+
+SIM_PREVIEW_NATURAL_SOFT_TROT = {
+    "amp_front": 0.026,
+    "amp_rear": 0.026,
+    "period": 0.90,
+    "nat_period": 0.90,
+    "nat_amp_front": 0.026,
+    "nat_amp_rear": 0.026,
+    "nat_step_h": 0.040,
+    "step_h_front": 0.040,
+    "fwd_front_lift": 0.040,
+    "stance": 0.66,
+    "lateral_sway": 0.004,
+    "anti_roll": 0.010,
+    "anti_roll_asym_neg": 1.05,
+    "anti_roll_asym_pos": 0.98,
+    "trot_roll_ff_neg_deg": 1.2,
+    "trot_roll_ff_pos_deg": 1.0,
+    "front_foot_stance_push_deg": 10.0,
+    "front_foot_swing_track": 0.0,
+    "spine_yaw_deg": 0.0,
+    "spine_roll_deg": 0.0,
+    # 前腿由三关节 IK 严格保持足朝向；禁止 IK 后单关节 flourish。
+    "thigh_swing_front_deg": 0.0,
+    "thigh_swing_rear_deg": 12.0,
+    "retract_front": 0.018,
+    "retract_rear": 0.014,
+    "tarsus_swing_deg": 0.0,
+    "touchdown_compress": 0.004,
+    "anti_roll_soft_scale": 0.35,
+    "toeoff_lift": 0.002,
+    "retract_peak": 0.36,
+    "lift_peak": 0.42,
+    "imu_kp": 0.040,
+    "imu_kp_pitch": 0.040,
+    "max_corr_mm": 14.0,
+    "imu_slew_mm_s": 80.0,
+    "imu_phase_td_gain": 0.25,
+    "imu_phase_swing_gain": 0.50,
+}
+
+
+TROT_PREVIEW_REAL = {
+    "height": 0.24,
+    "fwd_use_bwd": False,
+    "fwd_front_amp_scale": 1.0,
+    "lateral_sway": 0.0,
+    "stance": 0.60,
+    "ff_decouple": True,
+    "anti_roll": 0.010,
+    "anti_roll_asym_neg": 1.30,
+    "anti_roll_asym_pos": 0.85,
+    "step_h": 0.012,
+    "trot_roll_ff_neg_deg": 3.2,
+    "trot_roll_ff_pos_deg": 1.8,
+    "front_thrust_gain": 1.0,
+    "front_thrust_swing_gain": 1.0,
+    "front_tarsus_push": 0.0,
+    "front_foot_track_deg": -78.0,
+    "front_foot_stance_push_deg": 6.0,
+    "front_stand_foot_pitch_deg": -90.0,
+    "swing_clearance_per_rad": 0.35,
+    "imu_kp": 0.035,
+    "imu_predict_ms": 10.0,        # 100Hz后仅作为额外执行提前量
+    "imu_slew_mm_s": 120.0,
+    "max_corr_mm": 15.0,
+    "imu_phase_gate": True,
+    "td_imu_freeze_i": True,
+}
+
+
+NATURAL_TROT_REAL = {
+    "amp_front": 0.012,
+    "amp_rear": 0.010,
+    "period": 0.90,
+    "spine_yaw_deg": 0.0,
+    "spine_roll_deg": 0.0,
+    "lateral_sway": 0.006,
+    "anti_roll": 0.014,
+    "imu_kp": 0.040,
+    "step_h": 0.018,
+    "step_h_front": 0.015,
+    "trot_roll_ff_neg_deg": 2.5,
+    "trot_roll_ff_pos_deg": 1.5,
+    "anti_roll_asym_neg": 1.20,
+    "anti_roll_asym_pos": 0.90,
+    # 注意: 不设 front_stand_foot_pitch_deg。REAL 预设默认不开 front_foot_track_deg
+    # (足朝向跟踪), NaturalTrot 在 ramp=0 时的 tarsus 落在"legacy tarsus_push"
+    # 中性值(≈0), 若这里强行给 stand 设 -90°(≈49° tarsus)会和步态起始姿态不一致,
+    # 触发 assert_stand_matches_gait_start。等真正启用 front_foot_track_deg 时再一起加上。
+    "max_corr_mm": 18.0,
+    "imu_slew_mm_s": 110.0,
+    "imu_phase_td_gain": 0.30,
+    "imu_phase_swing_gain": 0.65,
+}
+
+
+# 实机 NaturalSoftTrot 预设 —— **步态形状/手感的唯一真源**。
+# 调 SoftTrot：只改本 dict（见 config/gait_tuning.py 入口说明）。
+# 与仿真验证套 (SIM_PREVIEW_BASE ∪ SIM_PREVIEW_NATURAL_SOFT_TROT) 对齐。
+#   - walk_startup 用 apply_preset_preserving_cli 灌进 args；显式 --flag 保留。
+#   - 只排除纯运行期开关(var_impedance/gravity_comp/auto_trim/leg_kp_scale/fwd_use_bwd)。
+# 要减速/降幅：摇杆油门，或临时改本 dict。
+NATURAL_SOFT_TROT_REAL = {
+    # ── 体高 / 节奏 / 支撑相 ──
+    "height": 0.24,
+    "period": 0.90,
+    "nat_period": 0.90,
+    "stance": 0.66,               # 软 trot 靠长支撑相降冲击
+    # ── 摆幅 / 抬腿 (满幅=仿真值; 实机靠摇杆油门线性缩放到这个上限) ──
+    "amp_front": 0.026,
+    "amp_rear": 0.026,
+    "nat_amp_front": 0.026,
+    "nat_amp_rear": 0.026,
+    "step_h": 0.040,
+    "nat_step_h": 0.040,
+    "step_h_front": 0.040,
+    "fwd_front_lift": 0.040,
+    # ── NaturalSoftTrot 柔顺核心形状 ──
+    "touchdown_compress": 0.004,
+    "anti_roll_soft_scale": 0.35,
+    "toeoff_lift": 0.002,
+    "retract_peak": 0.36,
+    "lift_peak": 0.42,
+    # 前腿由三关节 IK 严格保持足朝向；禁止 IK 后单关节 flourish。
+    "thigh_swing_front_deg": 0.0,
+    "thigh_swing_rear_deg": 12.0,
+    "retract_front": 0.018,
+    "retract_rear": 0.014,
+    "tarsus_swing_deg": 0.0,
+    "swing_clearance_per_rad": 0.35,
+    # ── 前脚朝向跟踪 (支撑相脚尖指地 -78°, 摆动相关闭让 tarsus 翻爪) ──
+    "front_thrust_gain": 1.0,
+    "front_thrust_swing_gain": 1.0,
+    "front_tarsus_push": 0.0,
+    "front_foot_track_deg": -78.0,
+    "front_foot_stance_push_deg": 10.0,
+    "front_foot_swing_track": 0.0,
+    "front_stand_foot_pitch_deg": -90.0,   # 与 front_foot_track 配套, 保证 stand==步态起点
+    # ── 脊柱律动: 软 trot 仿真里也关(0/0) ──
+    "spine_yaw_deg": 0.0,
+    "spine_roll_deg": 0.0,
+    # ── 抗侧倾 / 前馈 ──
+    "lateral_sway": 0.004,
+    "anti_roll": 0.010,
+    "anti_roll_asym_neg": 1.05,
+    "anti_roll_asym_pos": 0.98,
+    "trot_roll_ff_neg_deg": 1.2,
+    "trot_roll_ff_pos_deg": 1.0,
+    "ff_decouple": True,
+    # ── IMU 闭环 (仿真值) ──
+    "imu_kp": 0.040,
+    "imu_kp_pitch": 0.040,
+    "max_corr_mm": 14.0,
+    "imu_slew_mm_s": 80.0,
+    "imu_predict_ms": 10.0,        # 100Hz后仅作为额外执行提前量
+    "imu_phase_gate": True,
+    "imu_phase_td_gain": 0.25,
+    "imu_phase_swing_gain": 0.50,
+    "td_imu_freeze_i": True,
+}
+
+# WBC+MPC — 路线 B：真狗小跑 (diagonal trot)
+# duty≈0.56、T≈0.58s、后驱；满杆包络收紧避免 st→0.50 翻车
+# Dog-trot WBC: light cadence + rear drive. Front swing must clear ground —
+# mid-stick step_h_front≈2cm left ~92% swing-drag and stalled after first strides.
+NATURAL_SOFT_TROT_WBC = {
+    **NATURAL_SOFT_TROT_REAL,
+    "amp_front": 0.050,
+    "amp_rear": 0.068,
+    "nat_amp_front": 0.050,
+    "nat_amp_rear": 0.068,
+    "step_h": 0.048,
+    "nat_step_h": 0.048,
+    "step_h_front": 0.045,
+    "fwd_front_lift": 0.045,
+    "period": 0.58,
+    "nat_period": 0.58,
+    "stance": 0.56,
+    "fwd_front_amp_scale": 1.0,
+    "lateral_sway": 0.0025,
+    "anti_roll": 0.0,
+    "trot_roll_ff_neg_deg": 0.0,
+    "trot_roll_ff_pos_deg": 0.0,
+    "anti_roll_soft_scale": 0.0,
+    "retract_front": 0.028,
+    "retract_rear": 0.032,
+    "retract_peak": 0.40,
+    "lift_peak": 0.40,
+    "toeoff_lift": 0.007,
+    "touchdown_compress": 0.003,
+    "thigh_swing_front_deg": 0.0,
+    "thigh_swing_rear_deg": 6.0,
+    "spine_yaw_deg": 2.2,
+    "spine_roll_deg": 1.0,
+    "throttle_min_scale": 0.45,
+    "rear_clearance_m": 0.024,
+    "kp_base_roll": 68.0,
+    "kd_base_roll": 20.0,
+    "lateral_vel_damp": 14.0,
+    "swing_foot_kp": 70.0,
+    "com_y_shift_m": 0.0,
+}
+
+
+def apply_values(args, values: dict) -> None:
+    for key, value in values.items():
+        setattr(args, key, value)
+
+
+def apply_sim_preview(
+    args,
+    *,
+    physics_options_factory: Optional[Callable[..., object]] = None,
+) -> None:
+    apply_values(args, SIM_PREVIEW_BASE)
+    if physics_options_factory is not None:
+        args.sim_physics = physics_options_factory(
+            ground_friction=(1.8, 1.2, 0.001),
+            foot_friction=(1.5, 1.0, 0.001),
+        )
+    if getattr(args, "natural_soft_trot", False):
+        apply_values(args, SIM_PREVIEW_NATURAL_SOFT_TROT)
+    elif getattr(args, "natural_trot", False):
+        apply_values(args, SIM_PREVIEW_NATURAL_TROT)
+
+
+def apply_trot_preview_real(args) -> None:
+    apply_values(args, TROT_PREVIEW_REAL)

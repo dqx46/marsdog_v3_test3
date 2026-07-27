@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Runtime logs and generated diagnostics
+*.log
+stability_log_*.txt
+tests/Motor_test/log/
+mocap_to_real/log/
+
+# scripts/check.sh coverage artifacts (regenerated every run, not source)
+.coverage
+coverage_html/
+
+# Machine-local calibration / network helpers (do not commit)
+mocap_to_real/trim_cal.json
+mocap_to_real/fix_wifi_dns.sh
+mocap_to_real/pip_with_dns.py
+
+# Native/kernel build outputs
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+modules.order
+Module.symvers
+
+# Editor/OS metadata
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local sim telemetry dumps
+telemetry.csv
+telemetry.json
+.pytest_cache/

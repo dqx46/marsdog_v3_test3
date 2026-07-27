@@ -1,0 +1,5 @@
+# 质量门禁开发依赖(不是运行时依赖)。用法:
+#   pip3 install --user -r requirements-dev.txt
+#   ./scripts/check.sh
+pyflakes>=3.0
+coverage>=7.0
