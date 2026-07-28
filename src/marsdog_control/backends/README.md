@@ -1,17 +1,28 @@
 # Backends
 
-This directory is reserved for future runtime backends. It intentionally does
-not define backend classes yet.
+Shared I/O boundary for simulation and hardware. Controllers speak only
+`RobotState` / `ControlOutput` (URDF frame); backends own devices and stepping.
 
-Future boundaries:
+## Implemented
 
-- `RealRobotBackend` owns physical motors, sensors, timing, and device startup.
-- `SimRobotBackend` owns simulator stepping and simulator-specific state reads.
-- `ReplayBackend` owns deterministic playback of recorded robot state.
-- Every backend must expose robot state in the same internal units: meters,
-  radians, seconds, radians per second, and meters per second.
-- Backend outputs must still flow through `MotionTarget -> SafetySupervisor ->
-  CommandExecutor`; no backend may bypass safety.
+| Class | Module | Role |
+|---|---|---|
+| `RobotBackend` | `base.py` | Protocol: `read_state` / `send` / `shutdown` |
+| `SimRobotBackend` | `sim.py` | MuJoCo step + MIT-equivalent actuators |
+| `RealRobotBackend` | `real.py` | Motors / IMU via `WalkServices` (sign → URDF) |
 
-The current hardware implementation remains in `marsdog_control.hardware` while
-the legacy walking runtime is migrated gradually.
+Units are meters, radians, seconds. `joint_pos` / `joint_vel` are always URDF
+space. Base linear velocity for control comes from `BaseStateEstimator`
+(`--base-estimate-mode estimator`); MuJoCo `vel_xyz` truth is debug / telemetry
+only (`truth` mode).
+
+## Contract
+
+```
+MotionTarget → SafetySupervisor → CommandExecutor → ControlOutput
+                                                      │
+                                              RobotBackend.send()
+```
+
+No backend may bypass safety. Replay / RL backends remain future work; do not
+add device-specific branches inside gait or WBC.

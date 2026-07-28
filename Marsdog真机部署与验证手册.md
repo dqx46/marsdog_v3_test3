@@ -300,6 +300,29 @@ python3 mocap_to_real/walk.py --no-tail
 5. 左摇杆 Y 是否控制前后。
 6. 右摇杆 X 是否控制转向。
 
+### 6.4 WBC 同参首跑（与仿真 NATURAL_SOFT_TROT_WBC 对齐）
+
+仿真已验证的狗感小跑用同一套数字上机；**先记基线再微调**。完整清单见
+[`docs/REAL_WBC_SAME_PARAMS_BRINGUP.md`](docs/REAL_WBC_SAME_PARAMS_BRINGUP.md)。
+
+仿真 estimator 冒烟：
+
+```bash
+./scripts/estimator_wbc_smoke.sh
+```
+
+真机同参（吊带 / 急停就绪后）：
+
+```bash
+./run_walk.sh --natural-soft-trot --wbc --no-vmc --base-estimate-mode estimator
+```
+
+要求：
+
+- 控制路径只用 `--base-estimate-mode estimator`（不要用 `truth`）。
+- 对照 `docs/baselines/sim_wbc_estimator_summary.json` 与真机 `telemetry_summary` /
+  日志中的 roll、vx_est−cmd、contact mismatch、q_err。
+
 ---
 
 ## 7. 真机验证流程
@@ -704,6 +727,13 @@ python3 mocap_to_real/walk.py --no-gamepad --no-tail --no-log
 - [ ] 调高度正常。
 - [ ] 急停正常。
 - [ ] 关机趴下正常。
+
+### WBC 同参首跑（可选，站立/慢走 OK 之后）
+
+- [ ] 使用 `./run_walk.sh --natural-soft-trot --wbc --no-vmc --base-estimate-mode estimator`。
+- [ ] 未开 `--base-estimate-mode truth`。
+- [ ] 吊带保护；小油门。
+- [ ] 保存遥测并与 `docs/baselines/sim_wbc_estimator_summary.json` 对照（见 6.4）。
 
 ---
 
