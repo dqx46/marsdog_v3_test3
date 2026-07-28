@@ -132,11 +132,11 @@ def expected_diagonal_roll(t: float, period: float, stance_ratio: float,
 
 def leg_y_turn(leg: str, phase: float, turn: float, stance_ratio: float,
                max_turn_y_amp: float, turn_y_gain: float) -> float:
-    """转向时的 Y 轴跨步偏移量 (正值=向左跨步)。"""
+    """转向时的 Y 轴跨步偏移量 (正值=向左跨步)。行进转弯用，支撑相也扫 Y。"""
     if abs(turn) < 0.001:
         return 0.0
     y_amp = (
-        -turn * max_turn_y_amp if leg.startswith('f') else turn * max_turn_y_amp
+        turn * max_turn_y_amp if leg.startswith('f') else -turn * max_turn_y_amp
     ) * turn_y_gain
     if phase < stance_ratio:
         stance_t = phase / stance_ratio
@@ -144,6 +144,21 @@ def leg_y_turn(leg: str, phase: float, turn: float, stance_ratio: float,
     else:
         swing_t = (phase - stance_ratio) / (1.0 - stance_ratio)
         return -y_amp * math.cos(math.pi * swing_t)
+
+
+def spot_tangential_offset(hip_x: float, hip_y: float, yaw_step: float) -> tuple:
+    """Foothold shift in body frame for a CCW yaw step about the vertical axis.
+
+    ``ω × r`` for yaw: (dx, dy) = (−hip_y, +hip_x) * yaw_step.
+    Positive dy = foot moves left (+Y).
+    """
+    return (-hip_y * yaw_step, hip_x * yaw_step)
+
+
+def swing_lerp_mj(swing_t: float, p0: float, p1: float) -> float:
+    """Minimum-jerk blend from p0 (lift-off) to p1 (touchdown)."""
+    u = minimum_jerk(max(0.0, min(1.0, swing_t)))
+    return p0 + (p1 - p0) * u
 
 
 def stance_weight(phase: float, stance_ratio: float, swing_level: float,

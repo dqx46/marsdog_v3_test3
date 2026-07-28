@@ -185,6 +185,9 @@ class DynamicsTelemetry:
             "vx_cmd_mean": float(np.mean(vx_cmd)),
             "vx_est_mean": float(np.mean(vx)),
             "vx_truth_mean": float(np.mean(vx_truth)),
+            # Real-compare helpers (estimator path; truth may be 0 on hardware)
+            "vx_est_minus_cmd_mean": float(np.mean(vx - vx_cmd)),
+            "vx_truth_minus_cmd_mean": float(np.mean(vx_truth - vx_cmd)),
             "dtau_p95": _p95(dtau_all),
             "dtau_flip_p95": _p95(dtau_flip),
             "contact_mismatch_pct": mismatch,
@@ -197,6 +200,9 @@ class DynamicsTelemetry:
             "q_err_rms_mean_deg": float(np.degrees(np.mean(q_err))) if q_err.size else 0.0,
             "foot_z_min_m": foot_z_min,
             "fz_peak_n": fz_peak,
+            "estimate_mode": str(self.buffers["estimate_mode"][-1])
+            if self.buffers["estimate_mode"]
+            else "",
         }
 
     def format_summary(self, prefix: str = "[Tel]") -> str:
@@ -265,6 +271,18 @@ class DynamicsTelemetry:
             writer.writeheader()
             writer.writerows(rows)
         return n
+
+    def write_summary_json(self, path: str, *, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Write ``summary()`` (+ optional metadata) for sim↔real same-param diffs."""
+        import json
+
+        payload = dict(self.summary())
+        if extra:
+            payload.update(extra)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+            f.write("\n")
+        return payload
 
 
 def _flatten_named(key: str, val: Sequence) -> Dict[str, Any]:

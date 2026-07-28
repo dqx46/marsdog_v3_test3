@@ -36,4 +36,5 @@ Thumbs.db
 # Local sim telemetry dumps
 telemetry.csv
 telemetry.json
+telemetry_summary.json
 .pytest_cache/

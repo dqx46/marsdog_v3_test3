@@ -120,7 +120,7 @@ def main():
     # 保留用户透传 flag。默认: natural_soft_trot；若用户要 WBC 则不再强塞 VMC。
     # --headless / --duration 仅仿真入口识别，不进 walk_cli
     duration_s = 5.0
-    # 默认半杆：先看稳再谈大步（满杆仍可用 --vx 1.0）
+    # 默认半杆前进；原地转: --vx 0 --turn 0.8
     drive_vx = 0.55
     drive_turn = 0.0
     filtered = []
@@ -181,6 +181,12 @@ def main():
         forced.extend(["--wbc", "--no-vmc"])
     elif "--vmc" not in old_argv and "--no-vmc" not in old_argv:
         forced.append("--vmc")
+    # Real-parity default: estimator path unless user explicitly asks for truth.
+    if not any(
+        a == "--base-estimate-mode" or a.startswith("--base-estimate-mode=")
+        for a in old_argv
+    ):
+        forced.extend(["--base-estimate-mode", "estimator"])
 
     sys.argv = [sys.argv[0]] + forced + filtered
     args = parse_args()
@@ -193,10 +199,24 @@ def main():
     runtime_state.dm.fixed_targets[4] = 0.0
     runtime_state.dm.fixed_targets[8] = 0.0
 
+    est_mode = startup.runtime_config.dynamics.base_estimate_mode
+    if est_mode == "truth":
+        print(
+            "[Sim] WARN: --base-estimate-mode=truth (debug only); "
+            "real robot uses estimator — do not treat this run as deploy parity"
+        )
+
+    spot_demo = abs(drive_vx) < 0.12 and abs(drive_turn) >= 0.12
+    if spot_demo:
+        print(
+            f"[Sim] Spot-turn demo  vx={drive_vx:.2f} turn={drive_turn:.2f}  "
+            "(abduction-led; amp_x=0)"
+        )
+
     if runtime_state.wbc_enabled:
         print(
             f"[Sim] WBC+MPC ON  leg_kp_scale={runtime_state.leg_kp_scale:.2f}  "
-            f"estimate={startup.runtime_config.dynamics.base_estimate_mode}  "
+            f"estimate={est_mode}  "
             f"duration={duration_s:.1f}s"
         )
     elif runtime_state.vmc_enabled:
@@ -399,6 +419,15 @@ def main():
             if hasattr(tel, "write_csv"):
                 csv_n = tel.write_csv("telemetry.csv")
                 print(f"[Sim] Telemetry CSV saved to telemetry.csv ({csv_n} rows)")
+            if hasattr(tel, "write_summary_json"):
+                tel.write_summary_json(
+                    "telemetry_summary.json",
+                    extra={
+                        "source": "sim_walk",
+                        "note": "Compare with real same-param run; prefer estimator mode",
+                    },
+                )
+                print("[Sim] Telemetry summary saved to telemetry_summary.json")
             if hasattr(tel, "format_summary"):
                 print(tel.format_summary(prefix="[Tel]"))
 

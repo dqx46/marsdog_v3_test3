@@ -91,6 +91,10 @@ class RuntimeStateMachine:
                 cruise_turn_yamp=float(drive.cruise_turn_yamp),
                 vx_engage=float(drive.gp_trot_threshold),
                 vx_deadzone=float(drive.gp_deadzone),
+                turn_y_amp=float(getattr(self.nat_fwd, "max_turn_y_amp", 0.025)),
+                turn_amp_diff=float(
+                    getattr(self.nat_fwd, "max_turn_amp_diff", 0.020)
+                ),
             )
         )
         self._trot_schedule = SoftTrotSchedule(
@@ -108,6 +112,10 @@ class RuntimeStateMachine:
                 cruise_turn_yamp=float(drive.cruise_turn_yamp),
                 vx_engage=float(drive.gp_trot_threshold),
                 vx_deadzone=float(drive.gp_deadzone),
+                turn_y_amp=float(getattr(self.trot_fwd, "max_turn_y_amp", 0.025)),
+                turn_amp_diff=float(
+                    getattr(self.trot_fwd, "max_turn_amp_diff", 0.020)
+                ),
             )
         )
 
@@ -291,7 +299,7 @@ class RuntimeStateMachine:
                 self._apply_trot_throttle(state, vx, rx)
             return
 
-        # 2c) 只有转向摇杆 = 原地转(用 walk_mode 的步态原地转)
+        # 2c) 只有转向摇杆 = 原地转（髋外展迈腿为主，不是前后差速）
         if abs(rx) > deadzone:
             self.throttle = 0.0
             if self.walk_mode is RobotMode.NATURAL:
@@ -299,22 +307,19 @@ class RuntimeStateMachine:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.NATURAL, Direction.FWD,
                                             targets_now=last_targets, blend_time=b_time)
-                # 原地转: 摆幅归零, 只用差速转向
-                self.nat_fwd.amp_front = 0.0
-                self.nat_fwd.amp_rear = 0.0
-                self.nat_fwd.turn_y_gain = 1.0
-                self.nat_fwd.turn_cmd = rx
-                self.nat_fwd.vel_cmd = (0.0, 0.0, float(rx) * 0.4)
+                sched = self._nat_schedule.map(
+                    VelocityCommand(vx=0.0, yaw_rate=rx)
+                )
+                apply_schedule_to_gait(self.nat_fwd, sched)
             else:
                 if self.mode is not RobotMode.TROT or self.direction is not Direction.FWD:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.TROT, Direction.FWD,
                                             targets_now=last_targets, blend_time=b_time)
-                    self.trot_fwd.amp_front = 0.0
-                    self.trot_fwd.amp_rear = 0.0
-                self.trot_fwd.turn_y_gain = 1.0     # 原地转恢复横向跨步(蟹步)
-                self.trot_fwd.turn_cmd = rx
-                self.trot_fwd.vel_cmd = (0.0, 0.0, float(rx) * 0.4)
+                sched = self._trot_schedule.map(
+                    VelocityCommand(vx=0.0, yaw_rate=rx)
+                )
+                apply_schedule_to_gait(self.trot_fwd, sched)
             return
 
         # 2d) 无输入 = 归站立(松杆即停, 软 trot 也停 -> 回到带前腿 tarsus 的新站姿)

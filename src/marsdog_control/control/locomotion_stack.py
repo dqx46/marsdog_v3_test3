@@ -25,7 +25,8 @@ Dynamics ownership today:
 
 Real/sim parity: Backend fills joint_pos/joint_vel in URDF frame;
 BaseStateEstimator fills vel_xyz (default). Do not use MuJoCo truth in the
-control path except ``base_estimate_mode=truth`` for debug.
+control path except ``base_estimate_mode=truth`` for debug (telemetry may
+still log truth for offline comparison).
 """
 
 from __future__ import annotations

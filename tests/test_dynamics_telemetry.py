@@ -67,6 +67,8 @@ def test_summary_and_csv():
     assert s["amp_front_mean_cm"] > 3.0
     assert s["dtau_p95"] > 0.0
     assert s["dtau_flip_p95"] > 0.0
+    assert "vx_est_minus_cmd_mean" in s
+    assert s["estimate_mode"] == "estimator"
     text = tel.format_summary()
     assert "vx cmd/est/truth" in text
 
@@ -79,6 +81,10 @@ def test_summary_and_csv():
         assert "force_scale_fl" in header
         assert "amp_front" in header
         assert "dtau_max" in header
+        summary_path = os.path.join(td, "summary.json")
+        payload = tel.write_summary_json(summary_path, extra={"source": "unit"})
+        assert payload["source"] == "unit"
+        assert os.path.isfile(summary_path)
 
 
 def test_as_lists_includes_new_keys():

@@ -243,6 +243,20 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         imu_state = {}
     if hasattr(state, "vel_xyz"):
         imu_state["vel_xyz"] = state.vel_xyz
+    # Spot world-hold needs yaw (and optional base XY).
+    imu_state["yaw"] = float(getattr(state, "yaw", 0.0))
+    if "base_xy" not in imu_state:
+        if hasattr(state, "base_xy") and state.base_xy is not None:
+            imu_state["base_xy"] = state.base_xy
+        elif ctx.backend is not None and hasattr(ctx.backend, "data"):
+            # MuJoCo freejoint XY (sim). Real relies on vel integration in gait.
+            try:
+                imu_state["base_xy"] = (
+                    float(ctx.backend.data.qpos[0]),
+                    float(ctx.backend.data.qpos[1]),
+                )
+            except Exception:
+                pass
 
     # WBC 负责姿态/力：关掉 IMU 足高修正，避免双环抢控制
     if getattr(ctx.executor.config, "wbc_enabled", False) and getattr(

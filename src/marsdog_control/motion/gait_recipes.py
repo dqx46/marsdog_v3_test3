@@ -576,6 +576,10 @@ NATURAL_SOFT_TROT_WBC = {
     "spine_roll_deg": 1.0,
     "throttle_min_scale": 0.45,
     "rear_clearance_m": 0.024,
+    # Spot-turn / cruise turn: abduction Y is primary; amp_diff only for curved walk
+    "turn_y_amp": 0.040,
+    "turn_amp_diff": 0.012,
+    "turn_waist_yaw": 0.40,
     "kp_base_roll": 68.0,
     "kd_base_roll": 20.0,
     "lateral_vel_damp": 14.0,

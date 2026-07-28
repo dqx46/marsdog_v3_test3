@@ -319,6 +319,23 @@ class StableTrot(GaitController):
         self.turn_y_gain = 1.0
         # 腰扭转符号(硬件改线后可微调): 1=与腿转向同向(推荐); -1=反向
         self.waist_yaw_turn_sign = 1.0
+        # Spot-turn: Unitree continuous trot-turn (SpotYawStepper).
+        self.spot_turn_active = False
+        self.spot_yaw_step_rad = 0.45  # yaw per cycle at |turn|=1
+        self.spot_hip_half_width = 0.075
+        self.spot_y_hold_max_m = 0.055
+        self.spot_dx_scale = 0.0
+        # Spot waist: bias≈23° + pulse≈7° (hw soft-limit ±1.2rad / ±69°).
+        self.spot_waist_yaw_rad = 0.40
+        self.spot_waist_yaw_pulse_rad = 0.12
+        self._PHASE_OFFSET_CRUISE = dict(type(self)._PHASE_OFFSET)
+        self._PHASE_OFFSET = dict(self._PHASE_OFFSET_CRUISE)
+        from marsdog_control.motion.spot_yaw_step import SpotYawStepConfig, SpotYawStepper
+        self._spot = SpotYawStepper(
+            cfg=SpotYawStepConfig(y_hold_max_m=self.spot_y_hold_max_m),
+            hip_xy=self._spot_hip_xy,
+        )
+        self._spot_xy_cache = self._spot._xy_cache  # abd / _leg_y_turn read this
 
     @property
     def turn_cmd(self):
@@ -352,33 +369,126 @@ class StableTrot(GaitController):
 
         base_amp = self.amp_front if is_front else self.amp_rear
 
-        # 转向差速
-        turn_amp = turn * self.max_turn_amp_diff
-        amp = base_amp + turn_amp if is_left else base_amp - turn_amp
+        # Spot: no amp-diff; abduction Y does the turn. Cruise: tank amp-diff.
+        if getattr(self, "spot_turn_active", False):
+            amp = base_amp
+        else:
+            turn_amp = turn * self.max_turn_amp_diff
+            amp = base_amp + turn_amp if is_left else base_amp - turn_amp
 
         cx = self.x_offset_front if is_front else self.x_offset_rear
         sh = self.step_height_front if is_front else self.step_height
 
         x, is_swing, u = _ft.stable_trot_x(phase, amp, cx, self.stance_ratio, SMOOTH_GAIT)
+        if getattr(self, "spot_turn_active", False):
+            dx, _dy = self._spot_foot_xy(leg, t, turn)
+            x = cx + dx
+            # Unitree SpotYawStepper owns swing (diagonal trot duty).
+            is_swing = self._spot.in_swing(leg)
+            u = self._spot.swing_progress(leg) if is_swing else 0.0
         if is_swing:
             lift = self._swing_z(u, sh)
         else:
-            lift = _ft.stance_anti_roll_lift(u, self.anti_roll, self._anti_roll_diag_scale(t))
+            if getattr(self, "spot_turn_active", False):
+                lift = 0.0
+            else:
+                lift = _ft.stance_anti_roll_lift(u, self.anti_roll, self._anti_roll_diag_scale(t))
         return x, lift
 
     def _leg_y_turn(self, leg: str, t: float, turn: float) -> float:
         """返回转向时的 Y 轴跨步偏移量 (正值=向左跨步)。"""
+        if getattr(self, "spot_turn_active", False):
+            # Cache filled by _leg_xz earlier this tick (avoid double half-step).
+            return self._spot_xy_cache.get(leg, (0.0, 0.0))[1]
         phase = (t / self.period + self._PHASE_OFFSET[leg]) % 1.0
         return _ft.leg_y_turn(
             leg, phase, turn, self.stance_ratio,
             self.max_turn_y_amp, self.turn_y_gain)
 
-    def _lateral_offset(self, t: float) -> float:
-        """横向 CoM 偏移 — 与支撑对角线严格同步。
+    def _y_body_to_abd_roll(self, leg: str, y_body: float) -> float:
+        """Body-frame foot Y (+left) → abduction joint delta (+ = outward both sides).
 
-        FL+RR 支撑 (phase 0~sr): body 偏左(+Y), 向 FL 侧
-        FR+RL 支撑 (phase sr~1): body 偏右(-Y), 向 FR 侧
+        Left foot +Y = abduct; right foot +Y = adduct (−abd). Without this
+        side map, the same y command on L/R only changes stance width and
+        produces almost no yaw couple.
+
+        ``y_body`` is now a physically-derived ω×r_hip target (SpotYawStepper),
+        so the same leg-length lever as cruise sway applies directly — no
+        artificial lever shortening needed.
         """
+        side = 1.0 if leg.endswith("l") else -1.0
+        lever = max(1e-3, float(self.body_height))
+        return side * float(y_body) / lever
+
+    def _spot_hip_xy(self, leg: str) -> tuple:
+        """Hip position in body frame relative to CoM (for ω×r footholds).
+
+        Must NOT use foot stand x_offset (≈0 under hip) — that kills front dy.
+        """
+        if leg.startswith("f"):
+            hx = float(_COM_TO_FRONT)  # front hip ahead of CoM
+            hy = float(_HALF_TRACK_FRONT) if leg.endswith("l") else -float(_HALF_TRACK_FRONT)
+        else:
+            hx = -float(_COM_TO_REAR)  # rear hip behind CoM
+            hy = float(_HALF_TRACK_REAR) if leg.endswith("l") else -float(_HALF_TRACK_REAR)
+        return hx, hy
+
+    def _spot_update_pose(self, t: float, imu_state=None) -> None:
+        """Pose + one unitree-turn tick. Call once per get_targets."""
+        imu_state = imu_state or {}
+        yaw = float(imu_state.get("yaw", self._spot.yaw))
+        base_xy = None
+        vel_xy = None
+        if "base_xy" in imu_state:
+            bxy = imu_state["base_xy"]
+            base_xy = (float(bxy[0]), float(bxy[1]))
+        elif "vel_xyz" in imu_state:
+            vel_xy = (float(imu_state["vel_xyz"][0]), float(imu_state["vel_xyz"][1]))
+        self._spot.cfg.y_hold_max_m = float(getattr(self, "spot_y_hold_max_m", 0.045))
+        if hasattr(self, "spot_yaw_step_rad"):
+            self._spot.cfg.yaw_step_rad = float(self.spot_yaw_step_rad) or self._spot.cfg.yaw_step_rad
+        self._spot.update_pose(t, yaw=yaw, base_xy=base_xy, vel_xy=vel_xy, wz=0.0)
+        self._spot.tick(
+            t,
+            float(self._turn_filtered),
+            float(self.period),
+            stance_ratio=float(self.stance_ratio),
+        )
+
+    def _spot_foot_xy(self, leg: str, t: float, turn: float) -> tuple:
+        """Thin adapter → SpotYawStepper cache (tick already ran)."""
+        return self._spot.foot_xy(leg, t, turn, self.period)
+
+    def spot_leg_in_swing(self, leg: str) -> bool:
+        if not getattr(self, "spot_turn_active", False):
+            return False
+        return bool(self._spot.in_swing(leg))
+
+    def _spot_abd_from_cache(self, leg: str) -> float:
+        """Body-Y cache → abd (both signs — world hold needs adduct too)."""
+        y = self._spot.cached_xy(leg)[1]
+        return float(self._y_body_to_abd_roll(leg, y))
+
+    def _clear_spot_state(self) -> None:
+        self._spot.reset()
+
+    def get_spot_com_shift(self, t: float) -> tuple:
+        """Body-frame CoM shift into support triangle. Executor / sway only."""
+        if not getattr(self, "spot_turn_active", False):
+            return (0.0, 0.0)
+        return self._spot.com_shift_xy(
+            t, self.period, self.stance_ratio, self._PHASE_OFFSET)
+
+    def _lateral_offset(self, t: float) -> float:
+        """横向 CoM 偏移。
+
+        Spot: Y of support-triangle CoM shift (unloads the swing leg).
+        Cruise: diagonal trot sway (unchanged).
+        """
+        if getattr(self, "spot_turn_active", False):
+            # CoM unload via executor MPC/base_acc only — abd sway on top of
+            # world-hold twist was stacking and tipping in catch.
+            return 0.0
         return _ft.lateral_offset_trot(t, self.period, self.stance_ratio, self.lateral_sway)
 
     def _expected_diagonal_roll(self, t: float) -> float:
@@ -430,11 +540,22 @@ class StableTrot(GaitController):
         """生成步态目标。"""
         targets = self._zero_targets()
 
-        # 更新转向低通滤波
+        # Spot needs yaw/base + unitree tick before any _leg_xz / foot_xy call.
+        # Turn LPF first so tick sees the same filtered stick as the rest of gait.
         self._turn_filtered += self.turn_filter_alpha * (self._turn_cmd - self._turn_filtered)
+        if getattr(self, "spot_turn_active", False):
+            self._spot_update_pose(t, imu_state)
 
-        # ── smoothstep 振幅斜坡: 从0渐增到满幅 (参考 mydog_ref trot_ramp) ──
-        if self.ramp_duration > 0 and t < self.ramp_duration:
+        # Spot: do not use the 1s forward-walk ramp — it starves swing/abduct
+        # and looks like incomplete in-place marching. Brief 0.25s blend only.
+        if getattr(self, "spot_turn_active", False):
+            blend = 0.25
+            if blend > 0 and t < blend:
+                s = t / blend
+                ramp = s * s * (3.0 - 2.0 * s)
+            else:
+                ramp = 1.0
+        elif self.ramp_duration > 0 and t < self.ramp_duration:
             s = t / self.ramp_duration
             ramp = s * s * (3.0 - 2.0 * s)
         else:
@@ -443,20 +564,29 @@ class StableTrot(GaitController):
         z_front_base = -(self.body_height - _FRONT_HIP_OFFSET)
         z_rear_base  = -(self.body_height - _REAR_HIP_OFFSET)
 
-        lat_offset = self._lateral_offset(t) * ramp
+        if getattr(self, "spot_turn_active", False):
+            lat_offset = 0.0  # sway fights tangential abduction
+        else:
+            lat_offset = self._lateral_offset(t) * ramp
 
-        # Raibert 反应式校正 — 全程连续(不分stance/swing) + 低通滤波
-        if imu_state:
+            # Raibert 反应式校正 — 全程连续(不分stance/swing) + 低通滤波
+        if imu_state and not getattr(self, "spot_turn_active", False):
             roll = imu_state.get('roll', 0.0)
             gyro_roll = imu_state.get('gyro_roll', 0.0)
             raw = self.reactive_kp * roll + self.reactive_kd * gyro_roll
             raw = _clamp(raw, -0.10, 0.10)
             self._reactive_filtered += 0.15 * (raw - self._reactive_filtered)
+        elif getattr(self, "spot_turn_active", False):
+            self._reactive_filtered *= 0.9
         reactive = self._reactive_filtered * ramp
-        
+
         # Raibert Heuristic for Velocity (Dynamic Foot Placement)
         dx_raibert = 0.0
-        if imu_state and "vel_xyz" in imu_state:
+        if (
+            imu_state
+            and "vel_xyz" in imu_state
+            and not getattr(self, "spot_turn_active", False)
+        ):
             v_actual = imu_state["vel_xyz"][0]
             avg_amp = (self.amp_front + getattr(self, "amp_rear", self.amp_front)) / 2.0
             vx_cmd = (avg_amp * 2.0) / self.period
@@ -477,12 +607,20 @@ class StableTrot(GaitController):
             lift *= ramp
             z_u = z_front_base + lift
             if imu_dz:
-                z_u += imu_dz.get(leg, 0.0) * self._stance_weight(phase)
+                if getattr(self, "spot_turn_active", False):
+                    w_st = 0.0 if self.spot_leg_in_swing(leg) else 1.0
+                    z_u += imu_dz.get(leg, 0.0) * w_st
+                else:
+                    z_u += imu_dz.get(leg, 0.0) * self._stance_weight(phase)
 
-            in_swing = phase >= self.stance_ratio
+            in_swing = (
+                self.spot_leg_in_swing(leg)
+                if getattr(self, "spot_turn_active", False)
+                else phase >= self.stance_ratio
+            )
+            is_left = leg.endswith("l")
             if in_swing and self.swing_clearance_per_rad > 0 and imu_state:
                 roll = imu_state.get('roll', 0.0)
-                is_left = leg.endswith('l')
                 # roll>0 左高; 本侧偏低时 low_side>0 → 抬高摆动足端
                 low_side = (-roll if is_left else roll)
                 if low_side > 0:
@@ -492,8 +630,12 @@ class StableTrot(GaitController):
                 # 足朝向跟踪 (RL 策略: 脚尖时刻指地) — 三关节协同 3-DOF IK。
                 # ramp 起点 = 站立足朝向(tarsus≈0), 平滑过渡到目标朝向。
                 target_fp = math.radians(self.front_foot_track_deg)
-                # 支撑相额外前倾蹬地, 摆动相回中性
-                if not in_swing and self.front_foot_stance_push_deg != 0.0:
+                # 支撑相额外前倾蹬地 — spot 必须关，否则原地转变慢速前进
+                if (
+                    not in_swing
+                    and self.front_foot_stance_push_deg != 0.0
+                    and not getattr(self, "spot_turn_active", False)
+                ):
                     s = phase / self.stance_ratio
                     target_fp -= math.radians(
                         self.front_foot_stance_push_deg) * math.sin(math.pi * s)
@@ -534,20 +676,30 @@ class StableTrot(GaitController):
             mid_ta, cmd_ta = _cmd(f'{leg}_tarsus', tarsus_u)
             targets[mid_ta] = cmd_ta
 
-            sway_sign = -1.0 if leg == 'fl' else 1.0
-            sway_angle = sway_sign * lat_offset / self.body_height
-            
-            # Raibert 落脚点补偿: 仅作用于摆动腿, 支撑腿保持刚性防踹地
-            leg_reactive = reactive if phase >= self.stance_ratio else 0.0
-            
-            # 转向外展补偿 (前腿正角度=向左)
-            y_turn = self._leg_y_turn(leg, t, self._turn_filtered) * ramp
-            turn_roll = y_turn / self.body_height
-            
-            roll_angle = (
-                front_thigh_roll_abd_urdf(leg, self.hip_abduction)
-                + sway_angle + leg_reactive + turn_roll
-            )
+            # 1. Sway (lateral CoM shift)
+            # lat_offset > 0 means body moves left -> feet must move right (-Y) relative to body
+            y_sway = -lat_offset
+
+            # 2. Raibert reactive step
+            # roll < 0 (left) -> reactive < 0 -> feet must step left (+Y) to catch
+            if getattr(self, "spot_turn_active", False):
+                y_reactive = 0.0
+            else:
+                y_reactive = -reactive * self.body_height if phase >= self.stance_ratio else 0.0
+
+            # 3. Turn step
+            if getattr(self, "spot_turn_active", False):
+                y_turn = self._spot.cached_xy(leg)[1]
+            else:
+                y_turn = self._leg_y_turn(leg, t, self._turn_filtered) * ramp
+
+            # Total Y offset
+            y_total = y_sway + y_reactive + y_turn
+
+            # Convert to abduction joint angle
+            abd_delta = self._y_body_to_abd_roll(leg, y_total)
+
+            roll_angle = front_thigh_roll_abd_urdf(leg, self.hip_abduction) + abd_delta
             mid_tr, cmd_tr = _cmd(f'{leg}_thigh_roll', roll_angle)
             targets[mid_tr] = cmd_tr
 
@@ -559,7 +711,12 @@ class StableTrot(GaitController):
             lift *= ramp
             z_u = z_rear_base + lift
             if imu_dz:
-                z_u += imu_dz.get(leg, 0.0) * self._stance_weight(phase)
+                if getattr(self, "spot_turn_active", False):
+                    # FSM stance only — trot phase was fighting catch diagonals.
+                    w_st = 0.0 if self.spot_leg_in_swing(leg) else 1.0
+                    z_u += imu_dz.get(leg, 0.0) * w_st
+                else:
+                    z_u += imu_dz.get(leg, 0.0) * self._stance_weight(phase)
 
             thigh_u, calf_u = ik_rear_leg_2d(x_u, z_u)
             mid_th, cmd_th = _cmd(f'{leg}_thigh', thigh_u)
@@ -568,18 +725,30 @@ class StableTrot(GaitController):
             targets[mid_ca] = cmd_ca
 
             # 由于 URDF 已在 2026-07 修正为对称语义，所有横向关节正值均代表外展
-            # 因此不再需要基于腿左右的 sign 补丁。
-            abduction = self.hip_abduction
-            sway_angle = lat_offset / self.body_height
+            # 统一使用 _y_body_to_abd_roll 将 Y 轴偏移转换为外展角
             
-            # Raibert 落脚点补偿: 仅作用于摆动腿, 支撑腿保持刚性防踹地
-            leg_reactive = reactive if phase >= self.stance_ratio else 0.0
-            
-            # 转向外展补偿 (后腿负角度=向左)
-            y_turn = self._leg_y_turn(leg, t, self._turn_filtered) * ramp
-            turn_roll = -y_turn / self.body_height
-            
-            hip_roll = abduction + sway_angle + leg_reactive + turn_roll
+            # 1. Sway (lateral CoM shift)
+            y_sway = -lat_offset
+
+            # 2. Raibert reactive step
+            if getattr(self, "spot_turn_active", False):
+                y_reactive = 0.0
+            else:
+                y_reactive = -reactive * self.body_height if phase >= self.stance_ratio else 0.0
+
+            # 3. Turn step
+            if getattr(self, "spot_turn_active", False):
+                y_turn = self._spot.cached_xy(leg)[1]
+            else:
+                y_turn = self._leg_y_turn(leg, t, self._turn_filtered) * ramp
+
+            # Total Y offset
+            y_total = y_sway + y_reactive + y_turn
+
+            # Convert to abduction joint angle
+            abd_delta = self._y_body_to_abd_roll(leg, y_total)
+
+            hip_roll = self.hip_abduction + abd_delta
             mid_hr, cmd_hr = _cmd(f'{leg}_hip', hip_roll)
             targets[mid_hr] = cmd_hr
 
@@ -587,10 +756,33 @@ class StableTrot(GaitController):
         targets[j_wp.motor_id] = _clamp(
             self.waist_pitch_offset, j_wp.limit_lo, j_wp.limit_hi)
         
-        # waist_yaw 转向: 与腿部差速/蟹步方向对齐, 让腰扭转帮助整车转向(而非抵消)。
-        # 注: hip 关节接线方向修正后, 此处符号需取反, 否则腰会反向扭转抵消转向 -> 表现为斜行+转向无力。
+        # waist_yaw: turn>0(左转) → 正角，前半身朝转向侧拧（与腿同向）。
+        # spot 用中等偏置+对角脉冲；勿用旧 ±20° 硬锁。
         j_wy = JOINT_BY_NAME["waist_yaw"]
-        wy_turn = -self._turn_filtered * self.max_turn_waist_yaw * ramp * self.waist_yaw_turn_sign
+        if getattr(self, "spot_turn_active", False):
+            turn = float(self._turn_filtered)
+            bias = (
+                turn
+                * float(self.spot_waist_yaw_rad)
+                * ramp
+                * self.waist_yaw_turn_sign
+            )
+            bp = (t / max(1e-6, self.period)) % 1.0
+            pulse = (
+                turn
+                * float(self.spot_waist_yaw_pulse_rad)
+                * math.sin(2.0 * math.pi * bp)
+                * ramp
+                * self.waist_yaw_turn_sign
+            )
+            wy_turn = bias + pulse
+        else:
+            wy_turn = (
+                self._turn_filtered
+                * self.max_turn_waist_yaw
+                * ramp
+                * self.waist_yaw_turn_sign
+            )
         targets[j_wy.motor_id] = _clamp(
             self.waist_yaw_offset + wy_turn, j_wy.limit_lo, j_wy.limit_hi)
 
@@ -709,18 +901,31 @@ class NaturalTrot(StableTrot):
         is_left = leg.endswith('l')
 
         base_amp = self.amp_front if is_front else self.amp_rear
-        turn_amp = turn * self.max_turn_amp_diff
-        amp = base_amp + turn_amp if is_left else base_amp - turn_amp
+        if getattr(self, "spot_turn_active", False):
+            amp = base_amp
+        else:
+            turn_amp = turn * self.max_turn_amp_diff
+            amp = base_amp + turn_amp if is_left else base_amp - turn_amp
 
         cx = self.x_offset_front if is_front else self.x_offset_rear
         sh = self.step_height_front if is_front else self.step_height
         retract = self.retract_front if is_front else self.retract_rear
+        if getattr(self, "spot_turn_active", False):
+            retract = 0.0
 
         x, is_swing, u = _ft.natural_trot_x(phase, amp, cx, self.stance_ratio, retract)
+        if getattr(self, "spot_turn_active", False):
+            dx, _dy = self._spot_foot_xy(leg, t, turn)
+            x = cx + dx
+            is_swing = self._spot.in_swing(leg)
+            u = self._spot.swing_progress(leg) if is_swing else 0.0
         if is_swing:
             lift = self._swing_z(u, sh)
         else:
-            lift = _ft.stance_anti_roll_lift(u, self.anti_roll, self._anti_roll_diag_scale(t))
+            if getattr(self, "spot_turn_active", False):
+                lift = 0.0
+            else:
+                lift = _ft.stance_anti_roll_lift(u, self.anti_roll, self._anti_roll_diag_scale(t))
         return x, lift
 
     def _swing_flourish(self, leg: str, t: float) -> float:
@@ -746,17 +951,22 @@ class NaturalTrot(StableTrot):
         ramp = self._spine_ramp(t)
         bp = (t / self.period) % 1.0
 
+        # Spot turn: freeze gait-locked spine oscillation (it fights yaw).
+        spine_scale = 0.0 if getattr(self, "spot_turn_active", False) else 1.0
+
         # ── 层3: 脊柱对角律动 ──
         yaw_osc = (
             math.radians(self.spine_yaw_deg)
             * math.sin(2.0 * math.pi * bp + math.radians(self.spine_phase_deg))
             * ramp
+            * spine_scale
         )
         roll_osc = (
             math.radians(self.spine_roll_deg)
             * math.sin(2.0 * math.pi * bp
                        + math.radians(self.spine_roll_phase_deg))
             * ramp
+            * spine_scale
         )
 
         j_wy = JOINT_BY_NAME["waist_yaw"]
@@ -770,34 +980,34 @@ class NaturalTrot(StableTrot):
             j_wr.limit_lo, j_wr.limit_hi)
 
         # ── 大腿摆动 flourish ──
-        for leg, joint_name in (
-            ("fl", "fl_hip_pitch"),
-            ("fr", "fr_hip_pitch"),
-            ("rl", "rl_thigh"),
-            ("rr", "rr_thigh"),
-        ):
-            # 前脚启用三关节足朝向 IK 时，hip/calf/tarsus 已由 (x,z,foot_pitch)
-            # 唯一确定。IK 后再单独叠加前腿 hip flourish 会直接破坏足段朝向，
-            # NaturalSoftTrot 的 8° hip + 4° tarsus 曾令摆动足从 -90° 变成
-            # -102° 朝后。前腿视觉收腿应由 _leg_xz/retract_front 表达。
-            if leg.startswith("f") and self.front_foot_track_deg is not None:
-                continue
-            delta_u = self._swing_flourish(leg, t) * ramp
-            if abs(delta_u) < 1e-9:
-                continue
-            j = JOINT_BY_NAME[joint_name]
-            targets[j.motor_id] = targets.get(j.motor_id, 0.0) + delta_u
+        if not getattr(self, "spot_turn_active", False):
+            for leg, joint_name in (
+                ("fl", "fl_hip_pitch"),
+                ("fr", "fr_hip_pitch"),
+                ("rl", "rl_thigh"),
+                ("rr", "rr_thigh"),
+            ):
+                # 前脚启用三关节足朝向 IK 时，hip/calf/tarsus 已由 (x,z,foot_pitch)
+                # 唯一确定。IK 后再单独叠加前腿 hip flourish 会直接破坏足段朝向。
+                if leg.startswith("f") and self.front_foot_track_deg is not None:
+                    continue
+                delta_u = self._swing_flourish(leg, t) * ramp
+                if abs(delta_u) < 1e-9:
+                    continue
+                j = JOINT_BY_NAME[joint_name]
+                targets[j.motor_id] = targets.get(j.motor_id, 0.0) + delta_u
 
         # ── 层5: 前腿跗关节收放 ──
-        for leg, tarsus_name in (("fl", "fl_tarsus"), ("fr", "fr_tarsus")):
-            # 同上：足朝向跟踪开启时禁止在 IK 后独立改 tarsus。
-            if self.front_foot_track_deg is not None:
-                continue
-            delta_tar = self._tarsus_swing_delta(leg, t) * ramp
-            if abs(delta_tar) < 1e-9:
-                continue
-            j = JOINT_BY_NAME[tarsus_name]
-            targets[j.motor_id] = targets.get(j.motor_id, 0.0) + delta_tar
+        if not getattr(self, "spot_turn_active", False):
+            for leg, tarsus_name in (("fl", "fl_tarsus"), ("fr", "fr_tarsus")):
+                # 同上：足朝向跟踪开启时禁止在 IK 后独立改 tarsus。
+                if self.front_foot_track_deg is not None:
+                    continue
+                delta_tar = self._tarsus_swing_delta(leg, t) * ramp
+                if abs(delta_tar) < 1e-9:
+                    continue
+                j = JOINT_BY_NAME[tarsus_name]
+                targets[j.motor_id] = targets.get(j.motor_id, 0.0) + delta_tar
 
         return targets
 
@@ -877,26 +1087,40 @@ class NaturalSoftTrot(NaturalTrot):
         is_left = leg.endswith('l')
 
         base_amp = self.amp_front if is_front else self.amp_rear
-        turn_amp = turn * self.max_turn_amp_diff
-        amp = base_amp + turn_amp if is_left else base_amp - turn_amp
+        if getattr(self, "spot_turn_active", False):
+            amp = base_amp
+        else:
+            turn_amp = turn * self.max_turn_amp_diff
+            amp = base_amp + turn_amp if is_left else base_amp - turn_amp
 
         cx = self.x_offset_front if is_front else self.x_offset_rear
         sh = self.step_height_front if is_front else self.step_height
         retract = self.retract_front if is_front else self.retract_rear
+        if getattr(self, "spot_turn_active", False):
+            retract = 0.0  # pure abduction placement — no fore-aft shuffle
 
         x, is_swing, u = _ft.natural_soft_trot_x(
             phase, amp, cx, self.stance_ratio, retract, self.retract_peak)
+        if getattr(self, "spot_turn_active", False):
+            dx, _dy = self._spot_foot_xy(leg, t, turn)
+            x = cx + dx
+            is_swing = self._spot.in_swing(leg)
+            u = self._spot.swing_progress(leg) if is_swing else 0.0
         if is_swing:
             lift = self._swing_z(u, sh)
-            # Clearance must share the MJ bump envelope (0 at LO/TD).
-            # A flat +clearance caused an ~18mm Z step → visible jerk.
-            if not is_front and self.rear_clearance_m > 0.0:
+            if getattr(self, "spot_turn_active", False):
+                # Same clearance budget front/rear so diagonal catch looks paired.
+                lift += 0.014 * self._mj_bump(u, self.lift_peak)
+            elif not is_front and self.rear_clearance_m > 0.0:
                 lift += self.rear_clearance_m * self._mj_bump(u, self.lift_peak)
         else:
-            lift = _ft.natural_soft_trot_stance_lift(
-                u, self.anti_roll, self.anti_roll_soft_scale,
-                self._anti_roll_diag_scale(t),
-                self.touchdown_compress, self.toeoff_lift)
+            if getattr(self, "spot_turn_active", False):
+                lift = 0.0  # plant at nominal height; roll reach-down in get_targets
+            else:
+                lift = _ft.natural_soft_trot_stance_lift(
+                    u, self.anti_roll, self.anti_roll_soft_scale,
+                    self._anti_roll_diag_scale(t),
+                    self.touchdown_compress, self.toeoff_lift)
         return x, lift
 
     def _swing_flourish(self, leg: str, t: float) -> float:

@@ -185,6 +185,8 @@ class CommandExecutor:
     _dyn_tel: Optional[object] = None
     _foot_des_prev: Optional[Dict[str, np.ndarray]] = None
     _ctrl_dt: float = 0.005
+    # Spot yaw-debt anti-windup limit (rad ~ how far the target may lead measured).
+    _SPOT_YAW_DEBT_MAX: float = 0.25
 
     def __post_init__(self) -> None:
         if self.runtime_config is not None:
@@ -279,6 +281,7 @@ class CommandExecutor:
             self._foot_des_prev = {leg: np.zeros(3) for leg in _LEGS}
         self._vy_filt = 0.0
         self._tel_prev_tau = None
+        self._spot_yaw_debt = 0.0
 
     def build(
         self,
@@ -295,6 +298,21 @@ class CommandExecutor:
         velocities, ctrl_dt = self._velocity_feedforward(targets, clock=clock)
         self._ctrl_dt = ctrl_dt
         kp_phase = self._kp_phase(active_gait, t_rel)
+        # Spot: boost abd joints; swing Z tracking uses WBC swing weight / foot PD.
+        if active_gait is not None and getattr(active_gait, "spot_turn_active", False):
+            if kp_phase is None:
+                kp_phase = {}
+            leg_s = max(1e-3, float(self.config.leg_kp_scale))
+            boost = 1.4 / leg_s
+            for jname in (
+                "fl_thigh_roll", "fr_thigh_roll", "rl_hip", "rr_hip",
+            ):
+                if jname in JBN:
+                    mid = JBN[jname].motor_id
+                    kp_phase[mid] = max(float(kp_phase.get(mid, 1.0)), boost)
+            self._spot_swing_kp_boost = True
+        else:
+            self._spot_swing_kp_boost = False
 
         # Phase-only prior (VMC / fallback). WBC overwrites via ContactSchedule.
         leg_is_stance = {leg: True for leg in _LEGS}
@@ -439,6 +457,9 @@ class CommandExecutor:
 
         kp = float(self.config.swing_foot_kp)
         kd = float(self.config.swing_foot_kd)
+        if getattr(self, "_spot_swing_kp_boost", False):
+            kp *= 1.5
+            kd *= 1.25
         dt = max(1e-3, self._ctrl_dt)
         out = {}
         # Always compute PD targets; WBC blends by force_scale (stance→0 weight).
@@ -502,13 +523,49 @@ class CommandExecutor:
 
         contact_snap = None
         if self._contact is not None:
-            contact_snap = self._contact.update(
-                t_rel=t_rel,
-                gait=active_gait,
-                foot_z_world=foot_z,
-                foot_vz_world=foot_vz,
+            # Spot: trust phase schedule — measurement was keeping 3–4 feet "stance".
+            spot_now = bool(
+                active_gait is not None
+                and getattr(active_gait, "spot_turn_active", False)
             )
+            cfg_prev = None
+            if spot_now:
+                cfg_prev = (
+                    float(self._contact.cfg.measure_force_weight),
+                    float(self._contact.cfg.edge_blend),
+                    float(self._contact.cfg.phase_late_lo),
+                )
+                self._contact.cfg.measure_force_weight = 0.04
+                self._contact.cfg.edge_blend = 0.08
+                self._contact.cfg.phase_late_lo = 0.04
+            try:
+                contact_snap = self._contact.update(
+                    t_rel=t_rel,
+                    gait=active_gait,
+                    foot_z_world=foot_z,
+                    foot_vz_world=foot_vz,
+                )
+            finally:
+                if cfg_prev is not None:
+                    (
+                        self._contact.cfg.measure_force_weight,
+                        self._contact.cfg.edge_blend,
+                        self._contact.cfg.phase_late_lo,
+                    ) = cfg_prev
             leg_is_stance = dict(contact_snap.stance)
+            if spot_now:
+                # Stomp FSM owns contact: plant/twist = 4-stance; catch = diagonal.
+                stepper = getattr(active_gait, "_spot", None)
+                for leg in _LEGS:
+                    if stepper is not None and hasattr(stepper, "in_swing"):
+                        leg_is_stance[leg] = not bool(stepper.in_swing(leg))
+                    else:
+                        leg_is_stance[leg] = bool(contact_snap.scheduled[leg])
+                    contact_snap.stance[leg] = leg_is_stance[leg]
+                    if not leg_is_stance[leg]:
+                        contact_snap.force_scale[leg] = min(
+                            float(contact_snap.force_scale.get(leg, 0.0)), 0.10
+                        )
 
         if use_est and self._estimator is not None:
             # Joint rates already in v_pin; estimator solves for base linear vel
@@ -548,10 +605,13 @@ class CommandExecutor:
 
         vx_cmd = 0.0
         vy_cmd = 0.0
+        wz_cmd = 0.0
         if active_gait:
             if hasattr(active_gait, "vel_cmd"):
                 vx_cmd = active_gait.vel_cmd[0]
                 vy_cmd = active_gait.vel_cmd[1]
+                if len(active_gait.vel_cmd) > 2:
+                    wz_cmd = float(active_gait.vel_cmd[2])
             elif hasattr(active_gait, "amp_front") and hasattr(active_gait, "period"):
                 avg_amp = (
                     active_gait.amp_front
@@ -560,15 +620,12 @@ class CommandExecutor:
                 vx_cmd = (avg_amp * 2.0) / active_gait.period
 
         cfg = self.config
-        # Lateral velocity: light EMA then damp (cuts estimator noise, keeps authority)
+        # Lateral velocity: light EMA then damp (cuts estimator noise, keeps authority).
+        # Do NOT blend MuJoCo truth here — real has no truth; mixing it made sim
+        # look stabler than the estimator-only path used on hardware.
         a_vy = 0.25 if use_est else 0.45
         self._vy_filt = (1.0 - a_vy) * getattr(self, "_vy_filt", 0.0) + a_vy * vel_xyz[1]
-        # In sim, blend a bit of truth lateral into the damp signal
-        truth_vy = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[1])
-        if use_est and abs(truth_vy) + abs(self._vy_filt) > 1e-6:
-            vy_for_damp = 0.65 * self._vy_filt + 0.35 * truth_vy
-        else:
-            vy_for_damp = self._vy_filt if use_est else vel_xyz[1]
+        vy_for_damp = self._vy_filt if use_est else vel_xyz[1]
 
         base_acc_des = np.zeros(6)
         # Dog-trot plant undershoots kinematic vx while stance-LS overestimates
@@ -584,8 +641,26 @@ class CommandExecutor:
         vx_err = vx_cmd - vx_for_track
         # Push when slow; zero ax when est already at/above cmd (no fake brake).
         ax_gain = 3.5 if vx_err * vx_cmd > 1e-6 else 0.0
-        base_acc_des[0] = ax_gain * vx_err
-        base_acc_des[1] = -float(cfg.lateral_vel_damp) * vy_for_damp
+        spot = bool(getattr(active_gait, "spot_turn_active", False))
+        if spot:
+            # Kill forward creep hard; estimator under-reads scrubbing vx.
+            vx_raw = float(getattr(state, "vel_xyz", (vx_meas, 0.0, 0.0))[0])
+            vy_raw = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[1])
+            vx_brake = vx_raw if abs(vx_raw) > abs(vx_meas) else vx_meas
+            vy_brake = vy_raw if abs(vy_raw) > abs(float(vel_xyz[1])) else float(vel_xyz[1])
+            # Active back-bias cancels residual forward scrub.
+            base_acc_des[0] = -36.0 * (vx_brake + 0.03) - 6.0 * np.sign(vx_brake + 0.015)
+            base_acc_des[1] = -18.0 * vy_brake - 4.0 * np.sign(vy_brake)
+            # Pull CoM into the support triangle (SpotYawStepper), on top of brake.
+            if hasattr(active_gait, "get_spot_com_shift"):
+                sx, sy = active_gait.get_spot_com_shift(t_rel)
+                base_acc_des[0] += 30.0 * float(sx)
+                base_acc_des[1] += 40.0 * float(sy)
+            vx_cmd = -0.03
+            vy_cmd = 0.0
+        else:
+            base_acc_des[0] = ax_gain * vx_err
+            base_acc_des[1] = -float(cfg.lateral_vel_damp) * vy_for_damp
         base_acc_des[2] = cfg.kp_base_z * (target_z - current_base_z) - cfg.kd_base_z * v_pin[2]
         base_acc_des[3] = (
             cfg.kp_base_roll * (target_roll - state.roll)
@@ -595,8 +670,23 @@ class CommandExecutor:
             cfg.kp_base_pitch * (target_pitch - state.pitch)
             - cfg.kd_base_pitch * state.gyro_pitch
         )
-        # Light yaw rate damping (wz peak was ~1.1 rad/s)
-        base_acc_des[5] = -4.0 * state.gyro_yaw
+        # Spot: mild yaw_des track + wz — feet scrub does most of the turn.
+        if spot and abs(wz_cmd) > 0.05:
+            stepper = getattr(active_gait, "_spot", None)
+            yaw_err = float(stepper.yaw_error()) if stepper is not None else 0.0
+            yaw_err = max(-0.35, min(0.35, yaw_err))
+            base_acc_des[5] = (
+                8.0 * yaw_err
+                - 4.0 * state.gyro_yaw
+                + 3.0 * (wz_cmd - state.gyro_yaw)
+            )
+            self._spot_yaw_debt = yaw_err
+        else:
+            self._spot_yaw_debt = 0.0
+            if abs(wz_cmd) > 0.05:
+                base_acc_des[5] = 6.0 * (wz_cmd - state.gyro_yaw) - 1.5 * state.gyro_yaw
+            else:
+                base_acc_des[5] = -4.0 * state.gyro_yaw
 
         swing_acc, foot_pos_des = self._swing_acc_des(
             state,
@@ -619,15 +709,15 @@ class CommandExecutor:
             x0[6] = state.gyro_roll
             x0[7] = state.gyro_pitch
             x0[8] = state.gyro_yaw
-            x0[9] = vx_for_track
-            x0[10] = vel_xyz[1]
+            x0[9] = 0.0 if spot else vx_for_track
+            x0[10] = 0.0 if spot else vel_xyz[1]
             x0[11] = vel_xyz[2]
             x0[12] = -9.81
 
             H = self._force_planner.mpc.cfg.horizon
             dt_mpc = self._force_planner.mpc.cfg.dt
-            # Diagonal stance: (FL+RR) - (FR+RL). Shift CoM toward support side
-            # to oppose gait-locked roll (corr(roll,diag) was strongly negative).
+            # Cruise: diagonal CoM kick. Spot: CoM-into-support-triangle from
+            # SpotYawStepper (decoupled; zero if gait has no get_spot_com_shift).
             st = leg_is_stance
             diag = (
                 (1.0 if st.get("fl", True) else 0.0)
@@ -635,16 +725,27 @@ class CommandExecutor:
                 - (1.0 if st.get("fr", True) else 0.0)
                 - (1.0 if st.get("rl", True) else 0.0)
             )
-            # Positive diag (FL+RR) → positive y shift (robot +y = left)
-            y_shift = float(cfg.com_y_shift_m) * 0.5 * diag
+            x_shift = 0.0
+            if spot and hasattr(active_gait, "get_spot_com_shift"):
+                sx, sy = active_gait.get_spot_com_shift(t_rel)
+                x_shift = float(sx)
+                y_shift = float(sy)
+            else:
+                y_shift = 0.0 if spot else float(cfg.com_y_shift_m) * 0.5 * diag
 
             x_ref = np.zeros(13 * H)
+            wz_ref = float(wz_cmd)
+            yaw0 = (
+                float(getattr(getattr(active_gait, "_spot", None), "yaw_des", state.yaw))
+                if spot else state.yaw
+            )
             for k in range(H):
                 dt_k = k * dt_mpc
                 x_ref[k * 13 + 0] = target_roll
                 x_ref[k * 13 + 1] = target_pitch
-                x_ref[k * 13 + 2] = state.yaw
-                x_ref[k * 13 + 3] = vx_cmd * dt_k
+                x_ref[k * 13 + 2] = yaw0 + wz_ref * dt_k
+                x_ref[k * 13 + 8] = wz_ref
+                x_ref[k * 13 + 3] = vx_cmd * dt_k + x_shift
                 x_ref[k * 13 + 4] = vy_cmd * dt_k + y_shift
                 x_ref[k * 13 + 5] = target_z
                 x_ref[k * 13 + 9] = vx_cmd
@@ -666,19 +767,48 @@ class CommandExecutor:
                 dt=dt_mpc,
                 measured=leg_is_stance,
             )
+            # Spot: MPC horizon follows unitree diagonal duty (via SpotYawStepper).
+            if spot:
+                stepper = getattr(active_gait, "_spot", None)
+                per = float(getattr(active_gait, "period", 1.0) or 1.0)
+                if stepper is not None and hasattr(stepper, "predict_force_scale"):
+                    contact_h = np.zeros(4 * H, dtype=float)
+                    for k in range(H):
+                        t_k = t_rel + k * dt_mpc
+                        for li, leg in enumerate(_LEGS):
+                            contact_h[k * 4 + li] = float(
+                                stepper.predict_force_scale(leg, t_k, per)
+                            )
             force_scale = (
                 contact_snap.force_scale
                 if contact_snap is not None
                 else {leg: 1.0 for leg in _LEGS}
             )
-            f_c_des = self._force_planner.plan(
-                x0=x0,
-                x_ref=x_ref,
-                r_feet=r_feet,
-                contact_horizon=contact_h,
-                force_scale=force_scale,
-                dt=0.005,  # fixed control period; t_rel can reset at gait start
-            )
+            # Spot: open-dog yaw is the task — default Q barely tracks yaw (4)
+            # vs roll (90), so ayaw alone scrubs. Boost yaw/wz, pin XY.
+            q_prev = None
+            if spot:
+                q_prev = np.array(self._force_planner.mpc.cfg.weights_Q, copy=True)
+                q = np.array(q_prev, copy=True)
+                q[2] = 80.0   # yaw
+                q[3] = 40.0   # x hold
+                q[4] = 40.0   # y hold
+                q[8] = 40.0   # wz
+                q[9] = 60.0   # vx → 0
+                q[10] = 60.0  # vy → 0
+                self._force_planner.mpc.cfg.weights_Q = q
+            try:
+                f_c_des = self._force_planner.plan(
+                    x0=x0,
+                    x_ref=x_ref,
+                    r_feet=r_feet,
+                    contact_horizon=contact_h,
+                    force_scale=force_scale,
+                    dt=0.005,  # fixed control period; t_rel can reset at gait start
+                )
+            finally:
+                if q_prev is not None:
+                    self._force_planner.mpc.cfg.weights_Q = q_prev
         else:
             force_scale = (
                 contact_snap.force_scale
@@ -686,15 +816,38 @@ class CommandExecutor:
                 else {leg: 1.0 for leg in _LEGS}
             )
 
-        tau_opt = self._wbc_ctrl.compute_tau(
-            q_pin=q_pin,
-            v_pin=v_pin,
-            base_acc_des=base_acc_des,
-            leg_is_stance=leg_is_stance,
-            f_c_des=f_c_des,
-            swing_acc_des=swing_acc,
-            force_scale=force_scale,
-        )
+        # Spot: raise yaw/XY hold + swing tracking; soften stance lock.
+        wbc_w_prev = None
+        wbc_st_prev = None
+        wbc_sw_prev = None
+        if spot and self._wbc_ctrl is not None:
+            wbc_w_prev = np.array(self._wbc_ctrl.config.weight_base_acc, copy=True)
+            wbc_st_prev = float(self._wbc_ctrl.config.weight_stance_acc)
+            wbc_sw_prev = float(self._wbc_ctrl.config.weight_swing_acc)
+            w = np.array(wbc_w_prev, copy=True)
+            w[0, 0] = 45.0   # ax — kill creep
+            w[1, 1] = 45.0   # ay
+            w[3, 3] = max(float(w[3, 3]), 70.0)  # keep roll while yawing
+            w[5, 5] = 120.0  # ayaw assist (CoM+3-foot do the plant)
+            self._wbc_ctrl.config.weight_base_acc = w
+            self._wbc_ctrl.config.weight_stance_acc = 8.0
+            self._wbc_ctrl.config.weight_swing_acc = max(wbc_sw_prev, 18.0)
+        try:
+            tau_opt = self._wbc_ctrl.compute_tau(
+                q_pin=q_pin,
+                v_pin=v_pin,
+                base_acc_des=base_acc_des,
+                leg_is_stance=leg_is_stance,
+                f_c_des=f_c_des,
+                swing_acc_des=swing_acc,
+                force_scale=force_scale,
+            )
+        finally:
+            if wbc_w_prev is not None:
+                self._wbc_ctrl.config.weight_base_acc = wbc_w_prev
+                self._wbc_ctrl.config.weight_stance_acc = wbc_st_prev
+            if wbc_sw_prev is not None:
+                self._wbc_ctrl.config.weight_swing_acc = wbc_sw_prev
 
         # Light gravity assist blended under WBC torque (swing + stance)
         grav = gravity_trq(targets, 0.20)
@@ -919,18 +1072,29 @@ class CommandExecutor:
         if not self.config.variable_impedance or active_gait is None:
             return None
         kp_phase: dict[int, float] = {}
+        # Spot: follow unitree swing duty (SpotYawStepper), not cruise stagger.
+        spot = bool(getattr(active_gait, "spot_turn_active", False))
+        stepper = getattr(active_gait, "_spot", None) if spot else None
         period = active_gait.period
         stance_ratio = active_gait.stance_ratio
         offsets = active_gait._PHASE_OFFSET
         for mid, leg in _LEG_MOTOR_IDS:
-            phase = (t_rel / period + offsets[leg]) % 1.0
-            kp_phase[mid] = kp_phase_scale(
-                phase,
-                stance_ratio,
-                self.config.td_kp_scale,
-                self.config.swing_kp_scale,
-                self.config.td_window,
-            )
+            if stepper is not None and hasattr(stepper, "in_swing"):
+                in_sw = bool(stepper.in_swing(leg))
+                # Soft swing KP / firm stance KP — same numbers as cruise scales.
+                kp_phase[mid] = (
+                    float(self.config.swing_kp_scale) if in_sw
+                    else 1.0
+                )
+            else:
+                phase = (t_rel / period + offsets[leg]) % 1.0
+                kp_phase[mid] = kp_phase_scale(
+                    phase,
+                    stance_ratio,
+                    self.config.td_kp_scale,
+                    self.config.swing_kp_scale,
+                    self.config.td_window,
+                )
         return kp_phase
 
 

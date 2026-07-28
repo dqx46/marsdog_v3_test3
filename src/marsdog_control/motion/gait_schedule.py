@@ -3,21 +3,41 @@
 Replaces ad-hoc amp-only throttle with a single map:
   VelocityCommand(vx, yaw_rate) → amps, period, stance, step_h, turn, vel_cmd(SI)
 
+Spot turn (vx≈0, yaw≠0): Unitree-style continuous diagonal trot with
+body-frame yaw scrub + explicit hip abduction (``SpotYawStepper``),
+open-loop accumulating yaw, plus real ``vel_cmd.wz``. Cruise trot unchanged.
+
 Callers (FSM) apply ``GaitScheduleOutput`` onto the live gait controller.
 WBC reads ``gait.vel_cmd`` instead of reverse-engineering amp/period.
 
 Stick map: linear from ``vx_deadzone`` → 1.0 into ``speed_frac``
 (``throttle_min_scale`` … 1). ``vx_engage`` is FSM-only (do not reuse here).
-
-Design note — foot arc aspect:
-  Amp scales with throttle but a fixed step_h makes crawl look like a piston
-  (Δz/Δx → 1). Schedule therefore scales step_height with the same speed_frac.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
+
+# Open-dog trot: exact diagonal pairs (no soft stagger → no 3-leg overlap).
+SPOT_DIAGONAL_PHASE: Dict[str, float] = {
+    "fl": 0.00,
+    "rr": 0.00,
+    "fr": 0.50,
+    "rl": 0.50,
+}
+
+# Spot STATIC turn: one leg swings at a time (stance_ratio≈0.75 → 25% swing each),
+# 3 feet always planted. The 3 planted feet are world-held and reprojected at the
+# accumulating yaw_des, so they cooperatively rotate the base (no diagonal ±wz
+# couple, real ground purchase). Swing leg re-centres under its hip in the new
+# heading. Sequence rr → fr → rl → fl keeps the CoM inside the support triangle.
+SPOT_STATIC_PHASE: Dict[str, float] = {
+    "rr": 0.00,
+    "fr": 0.25,
+    "rl": 0.50,
+    "fl": 0.75,
+}
 
 
 @dataclass(frozen=True)
@@ -49,8 +69,24 @@ class GaitEnvelope:
     throttle_min_scale: float = 0.65
     cruise_turn_scale: float = 0.60
     cruise_turn_yamp: float = 1.0
+    # Cruise turn geometry (forward gait)
+    cruise_turn_y_amp_m: float = 0.025
+    cruise_turn_amp_diff_m: float = 0.020
     vx_deadzone: float = 0.12
     vx_engage: float = 0.30  # matches gp_trot_threshold
+    # Spot: Raibert plant-hold turn (swing → ω×r, stance HOLD).
+    spot_period: float = 0.85
+    spot_stance: float = 0.55
+    spot_step_h_front: float = 0.045
+    spot_step_h_rear: float = 0.045
+    spot_yaw_step_rad: float = 0.45
+    spot_dx_scale: float = 0.0
+    spot_turn_amp_diff_m: float = 0.0
+    spot_turn_scale: float = 1.0
+    spot_turn_y_gain: float = 0.0
+    spot_wz_scale: float = 0.40
+    spot_y_hold_max_m: float = 0.055
+    spot_com_shift_m: float = 0.0
 
     @classmethod
     def from_wbc_soft_trot(
@@ -69,6 +105,8 @@ class GaitEnvelope:
         cruise_turn_yamp: float = 1.0,
         vx_engage: float = 0.3,
         vx_deadzone: float = 0.12,
+        turn_y_amp: Optional[float] = None,
+        turn_amp_diff: Optional[float] = None,
     ) -> "GaitEnvelope":
         sh_f = float(step_h_front) if step_h_front is not None else 0.024
         sh_r = float(step_h_rear) if step_h_rear is not None else max(sh_f, 0.034)
@@ -83,6 +121,8 @@ class GaitEnvelope:
             if step_h_rear_floor is not None
             else min(0.030, max(0.020, 0.60 * sh_r))
         )
+        y_amp = float(turn_y_amp) if turn_y_amp is not None else 0.025
+        amp_diff = float(turn_amp_diff) if turn_amp_diff is not None else 0.020
         return cls(
             amp_front_max=float(amp_front),
             amp_rear_max=float(amp_rear),
@@ -101,8 +141,23 @@ class GaitEnvelope:
             throttle_min_scale=float(throttle_min_scale),
             cruise_turn_scale=float(cruise_turn_scale),
             cruise_turn_yamp=float(cruise_turn_yamp),
+            cruise_turn_y_amp_m=y_amp,
+            cruise_turn_amp_diff_m=amp_diff,
             vx_engage=float(vx_engage),
             vx_deadzone=float(vx_deadzone),
+            # Spot: Raibert plant-hold (swing → ω×r, stance HOLD).
+            spot_period=0.85,
+            spot_stance=0.55,
+            spot_step_h_front=0.045,
+            spot_step_h_rear=0.045,
+            spot_yaw_step_rad=0.45,
+            spot_dx_scale=0.0,
+            spot_turn_amp_diff_m=0.0,
+            spot_turn_scale=1.0,
+            spot_turn_y_gain=0.0,
+            spot_wz_scale=0.40,
+            spot_y_hold_max_m=0.055,
+            spot_com_shift_m=0.0,
         )
 
 
@@ -118,12 +173,18 @@ class GaitScheduleOutput:
     turn_y_gain: float
     # SI body twist for WBC/MPC (world-aligned x forward)
     vel_cmd: Tuple[float, float, float]  # vx, vy, wz
-    speed_frac: float  # 0..1 within envelope after engage
+    speed_frac: float
+    # Absolute turn geometry written onto gait.max_turn_*
+    turn_y_amp: float = 0.025
+    turn_amp_diff: float = 0.020
+    spot_turn: bool = False
+    spot_y_hold_max: float = 0.055
+    spot_yaw_step: float = 0.45
+    spot_dx_scale: float = 0.0
+    spot_com_shift: float = 0.0
 
 
 class SoftTrotSchedule:
-    """Maps stick velocity → soft-trot schedule inside a fixed envelope."""
-
     def __init__(self, envelope: Optional[GaitEnvelope] = None):
         self.env = envelope or GaitEnvelope()
 
@@ -132,9 +193,13 @@ class SoftTrotSchedule:
         vx = float(cmd.vx)
         yaw = float(cmd.yaw_rate)
         mag = min(1.0, abs(vx))
+        yaw_mag = min(1.0, abs(yaw))
+
+        # Abduction-led in-place spin when stick has yaw but no forward walk.
+        if mag < e.vx_deadzone and yaw_mag >= e.vx_deadzone:
+            return self._map_spot_turn(yaw)
+
         # Stick authority is linear from deadzone → 1.0.
-        # (vx_engage is FSM entry only; using it here crushed mid-stick range:
-        #  stick 0.55→1.0 used to span only ~30% of amp with throttle_min=0.7.)
         if mag < e.vx_deadzone:
             u = 0.0
             speed_frac = 0.0
@@ -146,8 +211,6 @@ class SoftTrotSchedule:
         sign = 1.0 if vx >= 0.0 else -1.0
         amp_f = sign * e.amp_front_max * speed_frac
         amp_r = sign * e.amp_rear_max * speed_frac
-        # Lift tracks stride for arc shape, but never below clearance floor
-        # (scaled-only lift made crawl look like a limp shuffle).
         if speed_frac > 1e-9:
             step_f = max(e.step_h_front_floor, e.step_h_front_max * speed_frac)
             step_r = max(e.step_h_rear_floor, e.step_h_rear_max * speed_frac)
@@ -155,16 +218,12 @@ class SoftTrotSchedule:
             step_f = 0.0
             step_r = 0.0
 
-        # Cadence & duty vs speed: crawl = slow period + high stance
         period = e.period_max + (e.period_min - e.period_max) * u
         stance = e.stance_max + (e.stance_min - e.stance_max) * u
         if speed_frac <= 1e-9:
             period = e.period_nom
             stance = e.stance_nom
 
-        # Body speed for MPC/WBC: kinematic no-slip (+ optional scrub prior).
-        # Scrub is currently 0 — dog-trot plant undershoots; positive scrub
-        # caused estimator/WBC to brake after the first strides.
         from marsdog_control.control.velocity_model import VX_SCRUB_OFFSET_MPS
 
         avg_amp = 0.5 * (abs(amp_f) + abs(amp_r))
@@ -173,9 +232,7 @@ class SoftTrotSchedule:
             vx_si = vx_kin + sign * float(VX_SCRUB_OFFSET_MPS)
         else:
             vx_si = 0.0
-        # Turn stick → yaw rate proxy (not SI; gait uses turn_cmd directly)
         turn_cmd = yaw * e.cruise_turn_scale
-        # Rough wz for MPC yaw tracking (scale stick to ~0.4 rad/s at full)
         wz_si = turn_cmd * 0.4
 
         return GaitScheduleOutput(
@@ -189,6 +246,43 @@ class SoftTrotSchedule:
             turn_y_gain=float(e.cruise_turn_yamp),
             vel_cmd=(float(vx_si), float(cmd.vy), float(wz_si)),
             speed_frac=float(speed_frac),
+            turn_y_amp=float(e.cruise_turn_y_amp_m),
+            turn_amp_diff=float(e.cruise_turn_amp_diff_m),
+            spot_turn=False,
+            spot_y_hold_max=float(e.spot_y_hold_max_m),
+            spot_yaw_step=float(e.spot_yaw_step_rad),
+            spot_dx_scale=float(e.spot_dx_scale),
+            spot_com_shift=float(e.spot_com_shift_m),
+        )
+
+    def _map_spot_turn(self, yaw: float) -> GaitScheduleOutput:
+        """In-place turn: diagonal trot, Raibert ω×r plant-hold."""
+        e = self.env
+        yaw_mag = min(1.0, abs(yaw))
+        span = max(1e-6, 1.0 - e.vx_deadzone)
+        u = max(0.0, min(1.0, (yaw_mag - e.vx_deadzone) / span))
+        turn_frac = 0.55 + 0.45 * u
+        sign = 1.0 if yaw >= 0.0 else -1.0
+        turn_cmd = sign * turn_frac * e.spot_turn_scale
+        wz_si = sign * turn_frac * e.spot_wz_scale
+        return GaitScheduleOutput(
+            amp_front=0.0,
+            amp_rear=0.0,
+            step_height_front=float(e.spot_step_h_front),
+            step_height=float(e.spot_step_h_rear),
+            period=float(e.spot_period),
+            stance_ratio=float(e.spot_stance),
+            turn_cmd=float(turn_cmd),
+            turn_y_gain=0.0,
+            vel_cmd=(0.0, 0.0, float(wz_si)),
+            speed_frac=0.0,
+            turn_y_amp=0.0,
+            turn_amp_diff=0.0,
+            spot_turn=True,
+            spot_y_hold_max=float(e.spot_y_hold_max_m),
+            spot_yaw_step=float(e.spot_yaw_step_rad),
+            spot_dx_scale=0.0,
+            spot_com_shift=float(e.spot_com_shift_m),
         )
 
 
@@ -209,6 +303,39 @@ def apply_schedule_to_gait(gait, sched: GaitScheduleOutput) -> None:
     gait.turn_y_gain = sched.turn_y_gain
     gait.vel_cmd = sched.vel_cmd
     gait.speed_frac = sched.speed_frac
+    if hasattr(gait, "max_turn_y_amp"):
+        gait.max_turn_y_amp = float(sched.turn_y_amp)
+    if hasattr(gait, "max_turn_amp_diff"):
+        gait.max_turn_amp_diff = float(sched.turn_amp_diff)
+
+    was_spot = bool(getattr(gait, "spot_turn_active", False))
+    if hasattr(gait, "spot_turn_active"):
+        gait.spot_turn_active = bool(sched.spot_turn)
+        if was_spot and not sched.spot_turn and hasattr(gait, "_clear_spot_state"):
+            gait._clear_spot_state()
+
+    # Spot: Unitree continuous diagonal trot-turn.
+    if hasattr(gait, "_PHASE_OFFSET") and hasattr(gait, "_PHASE_OFFSET_CRUISE"):
+        if sched.spot_turn:
+            gait._PHASE_OFFSET = dict(SPOT_DIAGONAL_PHASE)
+        elif was_spot:
+            gait._PHASE_OFFSET = dict(gait._PHASE_OFFSET_CRUISE)
+
+    if hasattr(gait, "turn_filter_alpha"):
+        gait.turn_filter_alpha = 0.12 if sched.spot_turn else 0.015
+    if hasattr(gait, "spot_y_hold_max_m"):
+        gait.spot_y_hold_max_m = float(sched.spot_y_hold_max)
+    if hasattr(gait, "spot_yaw_step_rad"):
+        gait.spot_yaw_step_rad = float(sched.spot_yaw_step)
+    if hasattr(gait, "spot_dx_scale"):
+        gait.spot_dx_scale = float(sched.spot_dx_scale)
+    spot = getattr(gait, "_spot", None)
+    if spot is not None and hasattr(spot, "cfg"):
+        spot.cfg.y_hold_max_m = float(sched.spot_y_hold_max)
+        spot.cfg.com_shift_max_m = float(getattr(sched, "spot_com_shift", 0.0))
+        spot.cfg.yaw_step_rad = float(sched.spot_yaw_step) or spot.cfg.yaw_step_rad
+        spot.cfg.stance_ratio = float(sched.stance_ratio)
+        spot.cfg.x_hold_max_m = max(0.045, 0.85 * float(sched.spot_y_hold_max))
 
 
 __all__ = [
@@ -217,4 +344,6 @@ __all__ = [
     "GaitScheduleOutput",
     "SoftTrotSchedule",
     "apply_schedule_to_gait",
+    "SPOT_DIAGONAL_PHASE",
+    "SPOT_STATIC_PHASE",
 ]
