@@ -1,8 +1,8 @@
 """USB 串口设备探测 — 通过总线上特有电机/IMU 识别各 USB-CAN 角色.
 
-五总线拓扑 (2026-07):
-  lz_can_a  灵足 CAN-A: ID 1,2,5,6,17           — 前腿主关节 + head_roll
-  incos_can 因克斯独立: ID 3,7                  — 前腿小腿
+五总线拓扑 (2026-07-29 前腿大腿改因克斯):
+  lz_can_a  灵足 CAN-A: ID 1,5,17              — 前腿髋 + head_roll
+  incos_can 因克斯独立: ID 2,3,6,7              — 前腿大腿外展 + 小腿
   lz_can_b  灵足 CAN-B: ID 10,11,13,14,15,16,21 — 后腿从关节 + 头部 + waist_roll
   evo_can   泉智博 EVO:  ID 9,12,18,19,20        — 后腿 hip + 颈腰
   dm_can    达妙 u2can:  ID 4,8                  — 前腿 tarsus (S2325)
@@ -15,7 +15,7 @@
     (1a86:7523) 完全不同, 可直接按 USB 描述符识别, 与物理插口/插拔顺序无关。
   - lz_can_a / lz_can_b / evo_can / incos_can: CH340 转 USB-CAN 无唯一序列号,
     通过总线上探测各角色专属电机 ID 区分；结果与物理 USB Hub 插口 (ID_PATH)
-    绑定。因克斯还可按已知插口 platform-fc880000...1.1.4 识别 (电机未上电时)。
+    绑定。因克斯还可按已知插口 platform-fc880000...1.1.1 识别 (电机未上电时)。
   - imu: 非 USB-CAN 协议适配器 (AT 指令握手会失败), 通过被动监听 0x55 帧头
     识别。
 """
@@ -37,13 +37,14 @@ CMD_REST_STATE = 0xFD
 MEVO_THETA_MIN, MEVO_THETA_MAX = -12.5, 12.5
 
 # 各总线用于识别的特征电机 (多 ID 投票，降低误报)
-PROBE_LZ_CAN_A_IDS = [1, 2, 5, 6, 17]
-PROBE_INCOS_IDS = [3, 7]
+PROBE_LZ_CAN_A_IDS = [1, 5, 17]
+PROBE_INCOS_IDS = [2, 3, 6, 7]
 PROBE_LZ_CAN_B_IDS = [10, 11, 13, 14, 15, 16, 21]
 PROBE_EVO_IDS = [9, 12, 18, 19, 20]
 
 # 因克斯独立 USB-CAN 的固定 Hub 物理口 (电机未上电时靠此识别)
-INCOS_CAN_ID_PATH = "platform-fc880000.usb-usb-0:1.1.4:1.0"
+# 2026-07-30 扫描: fc880000 口 1.1.1 = 因克斯 (旧注释里的 1.1.4 已过时)
+INCOS_CAN_ID_PATH = "platform-fc880000.usb-usb-0:1.1.1:1.0"
 
 INCOS_QUERY_POSITION = bytes([0xE1, 0x01])
 
@@ -61,7 +62,7 @@ MOUTH_USB_SERIAL_PREFIX = "Hades2001_M5stack"
 
 ROLE_NAMES = {
     "lz_can_a": "灵足 CAN-A (前腿主关节 + head_roll)",
-    "incos_can": "因克斯独立 CAN (前腿小腿 ID 3,7)",
+    "incos_can": "因克斯独立 CAN (前腿大腿+小腿 ID 2,3,6,7)",
     "lz_can_b": "灵足 CAN-B (后腿从关节 + 头部 + waist_roll)",
     "evo_can":  "泉智博 EVO CAN (后腿hip + 颈腰)",
     "dm_can":   "达妙 u2can (前腿 tarsus S2325)",
@@ -448,7 +449,7 @@ def render_udev_rules(found):
         "",
     ]
 
-    for role in ("lz_can_a", "lz_can_b", "evo_can", "dm_can", "imu",
+    for role in ("lz_can_a", "lz_can_b", "incos_can", "evo_can", "dm_can", "imu",
                  "tail_485", "mouth_esp32"):
         info = found.get(role)
         if not info or not info.get("id_path"):

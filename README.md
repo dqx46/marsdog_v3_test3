@@ -8,7 +8,27 @@
 
 ---
 
-## 0. `mocap_to_real` 现在是什么？
+## 0. 运行环境（pinocchio 等）— 新板必做一次
+
+aarch64 上 PyPI **没有**可用的 Pinocchio 轮子，请用 conda 环境（已写入仓库）：
+
+| 文件 | 作用 |
+|---|---|
+| `environment.yml` | 顶层依赖（日常创建环境用这个） |
+| `environment.lock.yml` | 完整锁定（可选，更严复现） |
+| `scripts/setup_env.sh` | 一键装 Miniforge + 创建 `marsdog` 环境 |
+
+```bash
+cd /home/cat/公共的/marsdog_v3_test3 && ./scripts/setup_env.sh
+```
+
+装好后 `./run_walk.sh` 会自动用 `~/miniforge3/envs/marsdog/bin/python`。
+
+**不要把 `~/miniforge3` 推进 git**（数 GB）。保留本机该目录，下次换代码几乎不用重装；只有新板或删了 Miniforge 才再跑 `setup_env.sh`。
+
+---
+
+## 0.1 `mocap_to_real` 现在是什么？
 
 **控制/工具代码真源已全部不在这里。**  
 `mocap_to_real/*.py` = **兼容启动器/壳**（转发到 `src/marsdog_control`）。  

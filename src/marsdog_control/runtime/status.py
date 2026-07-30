@@ -30,7 +30,8 @@ class RuntimeStatusDisplay:
                imu, imu_dz, lie_down_hold: bool, joint_direction_test: bool,
                hip_abd_test: bool, leg_pitch_test: bool,
                direction_test_start: float, direction_test_duration_s: float,
-               lz, evo, incos=None, board=None) -> None:
+               lz, evo, incos=None, board=None,
+               pose_hold_name: str | None = None) -> None:
         now = self.clock.time()
         if now >= self.next_print:
             self._print_loop_status(
@@ -41,6 +42,7 @@ class RuntimeStatusDisplay:
                 imu=imu,
                 imu_dz=imu_dz,
                 lie_down_hold=lie_down_hold,
+                pose_hold_name=pose_hold_name,
                 joint_direction_test=joint_direction_test,
                 hip_abd_test=hip_abd_test,
                 leg_pitch_test=leg_pitch_test,
@@ -57,9 +59,15 @@ class RuntimeStatusDisplay:
                            imu, imu_dz, lie_down_hold: bool,
                            joint_direction_test: bool, hip_abd_test: bool,
                            leg_pitch_test: bool, direction_test_start: float,
-                           direction_test_duration_s: float) -> None:
+                           direction_test_duration_s: float,
+                           pose_hold_name: str | None = None) -> None:
         if lie_down_hold:
-            sys.stdout.write("\r  [LIE_DOWN] 保持趴下姿势  q=退出并缓速失能      ")
+            if pose_hold_name == "sit":
+                sys.stdout.write(
+                    "\r  [SIT] 保持坐下姿势  z=起立  p=改趴下  q=退出      ")
+            else:
+                sys.stdout.write(
+                    "\r  [LIE_DOWN] 保持趴下姿势  p=起立  z=改坐下  q=退出      ")
         elif active_gait:
             tag = mode.upper()
             vel = getattr(active_gait, "vel_cmd", None)

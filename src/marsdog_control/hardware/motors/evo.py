@@ -355,10 +355,15 @@ class MotorEvo:
                 idx = mid - 1
                 if mid in found:
                     self._loss_count[idx] = 0
+                    self.is_connected[idx] = True
                 else:
                     self._loss_count[idx] += 1
                     if self._loss_count[idx] >= LOSS_MAX:
-                        self.is_connected[idx] = False
+                        # 保活收窗只有 1–2ms，5 个电机挤同一 USB-CAN 时常收不齐。
+                        # init 已确认在线的电机不要因此摘掉（static_test 逐个探针仍全绿，
+                        # 但 board.online_ids 会变成 20/21，漏掉 waist_pitch=20 等）。
+                        if mid not in self._active_ids:
+                            self.is_connected[idx] = False
 
             # 3. 精准等待剩余时间以维持 POLL_MS 周期
             elapsed = time.monotonic() - t0

@@ -173,6 +173,10 @@ def poll_user_command(gp, kb, fsm, inp: InputState, *,
         cmd.request_mode = RobotMode.TROT       # toggle(站立<->trot)
     elif key == '3':
         cmd.request_mode = RobotMode.NATURAL
+    elif key in ('z', 'Z'):
+        cmd.request_sit = True                  # 坐下(sit_pose.json)
+    elif key in ('p', 'P'):
+        cmd.request_lie_down = True             # 趴下(lie_down_pose.json)
     else:
         dev_key = key                           # 其余交给开发调参旁路
     return cmd, dev_key
@@ -188,7 +192,8 @@ def apply_dev_tuning(dev_key, fsm, imu_ctrl, lz, evo, dm, rt: DevTuningRuntime,
     if not dev_key:
         return False
     k = dev_key
-    if k in ('p', 'P'):
+    if k in ('i', 'I'):
+        # 原 p=状态；p 已留给趴下姿势
         check_motors(lz, evo, dm, label="dev")
     elif k in ('+', '='):
         fsm.set_period(max(0.25, fsm.trot_fwd.period - 0.05))

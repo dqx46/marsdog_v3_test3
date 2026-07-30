@@ -1,0 +1,18 @@
+# Marsdog 真机运行环境 (conda-forge)
+# 用法见 scripts/setup_env.sh
+#
+# 注意: 不要把 miniforge3/ 整目录推进 git（数 GB）。
+# 本文件 + setup 脚本即可在新板上几分钟复现。
+name: marsdog
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pinocchio=4.1.*
+  - numpy=2.2.*
+  - scipy=1.15.*
+  - osqp=1.1.*
+  - qpsolvers=4.13.*
+  - pyserial
+  - pyyaml
+  - pip

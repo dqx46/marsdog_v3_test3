@@ -147,13 +147,17 @@ from marsdog_control.motion.lie_down import (  # noqa: E402
     NON_BODY_LIE_MOTOR_IDS as _NON_BODY_LIE_MOTOR_IDS,
     LIE_DOWN_TARGETS_RAD,
     default_lie_down_pose_path as _default_lie_down_pose_path,
+    default_sit_pose_path as _default_sit_pose_path,
     load_lie_down_pose_from_log as _load_lie_down_pose_from_log,
     save_lie_down_pose as _save_lie_down_pose,
     load_lie_down_pose as _load_lie_down_pose,
     build_lie_down_target as _build_lie_down_target,
+    build_sit_target as _build_sit_target,
 )
 
 _LIE_DOWN_POSE_PATH = _default_lie_down_pose_path(
+    _APP_RESOURCE_DIR)
+_SIT_POSE_PATH = _default_sit_pose_path(
     _APP_RESOURCE_DIR)
 
 
@@ -223,6 +227,10 @@ def _services() -> _WalkServices:
 
 def build_lie_down_target(online, pose_path: str = _LIE_DOWN_POSE_PATH) -> dict:
     return _build_lie_down_target(online, pose_path=pose_path)
+
+
+def build_sit_target(online, pose_path: str = _SIT_POSE_PATH) -> dict:
+    return _build_sit_target(online, pose_path=pose_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -438,6 +446,7 @@ def main(args=None):
         gamepad_device=GAMEPAD_DEVICE,
         input_hal_cls=_WalkInputHAL,
         build_lie_down_target=build_lie_down_target,
+        build_sit_target=build_sit_target,
         stop_scope=_stop_scope,
         load_trim_cal=_load_trim_cal, save_trim_cal=_save_trim_cal,
         trim_cal_path=_TRIM_CAL_PATH,

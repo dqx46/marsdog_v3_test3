@@ -53,7 +53,8 @@ MOTOR_RANGES = {
 }
 DEFAULT_RANGE = (-50.0, 50.0, -6.0, 6.0)
 
-RS05_CAN_IDS = [1, 2, 5, 6, 17]              # lz_can_a: 前腿髋/大腿 + head_roll；ID3/7 为 Incos
+# lz_can_a: 仅前腿髋 + head_roll。前腿大腿/小腿 ID 2/3/6/7 已迁到因克斯独立总线。
+RS05_CAN_IDS = [1, 5, 17]
 RS05_SERIAL_IDS = [10, 11, 13, 14, 15, 16, 21]  # lz_can_b: 后腿从关节 + 头/腰
 
 

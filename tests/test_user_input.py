@@ -95,6 +95,17 @@ class PollUserCommandTest(unittest.TestCase):
         self.assertEqual(cmd.request_mode, RobotMode.TROT)
         self.assertIsNone(dev)
 
+    def test_keyboard_sit_and_lie_down(self):
+        cmd, dev = self._poll(kb=_FakeKb("z"))
+        self.assertTrue(cmd.request_sit)
+        self.assertFalse(cmd.request_lie_down)
+        self.assertIsNone(dev)
+
+        cmd, dev = self._poll(kb=_FakeKb("p"))
+        self.assertTrue(cmd.request_lie_down)
+        self.assertFalse(cmd.request_sit)
+        self.assertIsNone(dev)
+
     def test_keyboard_dev_key_passthrough(self):
         cmd, dev = self._poll(kb=_FakeKb("+"))
         self.assertFalse(cmd.quit)

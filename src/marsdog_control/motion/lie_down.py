@@ -41,6 +41,10 @@ def default_lie_down_pose_path(base_dir: str) -> str:
     return os.path.join(base_dir, "lie_down_pose.json")
 
 
+def default_sit_pose_path(base_dir: str) -> str:
+    return os.path.join(base_dir, "sit_pose.json")
+
+
 def load_lie_down_pose_from_log(path: str) -> dict:
     """从 walk CSV 最后一帧读取趴下姿势(电机帧 rad), 排除头/脖子 15/16/17/18。"""
     pose = {}
@@ -53,8 +57,8 @@ def load_lie_down_pose_from_log(path: str) -> dict:
     return pose
 
 
-def save_lie_down_pose(path: str, pose: Mapping) -> None:
-    """保存趴下姿势 JSON。键为电机 ID 字符串, 值为电机帧 rad。"""
+def save_lie_down_pose(path: str, pose: Mapping, *, pose_name: str = "lie_down") -> None:
+    """保存姿势 JSON（趴下/坐下共用）。键为电机 ID 字符串, 值为电机帧 rad。"""
     clean = {
         str(int(mid)): float(q)
         for mid, q in pose.items()
@@ -63,6 +67,7 @@ def save_lie_down_pose(path: str, pose: Mapping) -> None:
     with open(path, "w") as f:
         json.dump({
             "source": "captured-live-motor-position",
+            "pose_name": str(pose_name),
             "saved_at": datetime.datetime.now().isoformat(timespec="seconds"),
             "units": "motor_frame_rad",
             "excluded_motor_ids": sorted(NON_BODY_LIE_MOTOR_IDS),
@@ -97,12 +102,25 @@ def build_lie_down_target(online: Iterable[int], pose_path: str,
     }
 
 
+def build_sit_target(online: Iterable[int], pose_path: str,
+                     fallback: Optional[Mapping[int, float]] = None) -> dict:
+    """构造坐下目标: 仅用 sit_pose.json（无内置 fallback，缺文件则空）。"""
+    pose = load_lie_down_pose(pose_path) or dict(fallback or {})
+    online_set = set(online)
+    return {
+        mid: q for mid, q in pose.items()
+        if mid in online_set and mid not in NON_BODY_LIE_MOTOR_IDS
+    }
+
+
 __all__ = [
     "NON_BODY_LIE_MOTOR_IDS",
     "LIE_DOWN_TARGETS_RAD",
     "default_lie_down_pose_path",
+    "default_sit_pose_path",
     "load_lie_down_pose_from_log",
     "save_lie_down_pose",
     "load_lie_down_pose",
     "build_lie_down_target",
+    "build_sit_target",
 ]

@@ -77,30 +77,34 @@ class MotorIncos:
         self.rx_count = [0] * MAX_ID
         self.tx_count = [0] * MAX_ID
 
-    def begin(self, device, motor_ids=(3, 7), baud=BAUD):
+    def begin(self, device, motor_ids=(2, 3, 6, 7), baud=BAUD):
         self._active_ids = list(motor_ids)
         if not self._serial.begin(device, baud):
             return False
 
-        # query_parameter/_send 自己会拿锁；这里不能再包一层 Lock（非可重入会死锁）
-        with self._lock:
-            self._serial.flush()
+        # 与 static_test.probe_incos 同策略：逐台 flush→查询→短窗收包，失败再试，
+        # 避免一次广播多 ID 时个别应答被冲掉（曾出现 ID3 偶发漏检、static_test 却全绿）。
+        time.sleep(0.05)
         for mid in self._active_ids:
-            self.query_parameter(mid, QUERY_POSITION)
-            time.sleep(0.003)
-
-        deadline = time.monotonic() + 0.35
-        while time.monotonic() < deadline:
-            with self._lock:
-                msg = self._serial.read_msg()
-            if msg:
-                self._handle_msg(msg)
-            if all(self.is_connected[mid - 1] for mid in self._active_ids):
-                break
-            time.sleep(0.001)
-
-        for mid in self._active_ids:
-            if self.is_connected[mid - 1]:
+            ok = False
+            for _attempt in range(4):
+                with self._lock:
+                    self._serial.flush()
+                self.query_parameter(mid, QUERY_POSITION)
+                deadline = time.monotonic() + 0.08
+                while time.monotonic() < deadline:
+                    with self._lock:
+                        msg = self._serial.read_msg()
+                    if msg:
+                        self._handle_msg(msg)
+                        if self.is_connected[mid - 1]:
+                            ok = True
+                            break
+                    time.sleep(0.001)
+                if ok:
+                    break
+                time.sleep(0.01)
+            if ok:
                 print(f"[Incos] motor {mid} online")
             else:
                 print(f"[Incos] motor {mid} init failed (no query reply)")
@@ -111,7 +115,7 @@ class MotorIncos:
         self.start_keepalive()
         return any(self.is_connected[mid - 1] for mid in self._active_ids)
 
-    def begin_shared(self, serial_obj, lock, motor_ids=(3, 7),
+    def begin_shared(self, serial_obj, lock, motor_ids=(2, 3, 6, 7),
                      register_handler=None):
         """Attach to an already-open USB-CAN bus owned by another driver."""
         self._active_ids = list(motor_ids)
@@ -121,18 +125,21 @@ class MotorIncos:
         if register_handler is not None:
             register_handler(lambda can_id, dlc, data: self._handle_msg((can_id, dlc, data)))
 
+        time.sleep(0.05)
         for mid in self._active_ids:
-            self.query_parameter(mid, QUERY_POSITION)
-            time.sleep(0.003)
-
-        deadline = time.monotonic() + 0.35
-        while time.monotonic() < deadline:
-            if all(self.is_connected[mid - 1] for mid in self._active_ids):
-                break
-            time.sleep(0.001)
-
-        for mid in self._active_ids:
-            if self.is_connected[mid - 1]:
+            ok = False
+            for _attempt in range(4):
+                self.query_parameter(mid, QUERY_POSITION)
+                deadline = time.monotonic() + 0.08
+                while time.monotonic() < deadline:
+                    if self.is_connected[mid - 1]:
+                        ok = True
+                        break
+                    time.sleep(0.001)
+                if ok:
+                    break
+                time.sleep(0.01)
+            if ok:
                 print(f"[Incos] motor {mid} online (shared CAN-A)")
             else:
                 print(f"[Incos] motor {mid} init failed on shared CAN-A")

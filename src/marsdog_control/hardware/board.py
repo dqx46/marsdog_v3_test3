@@ -130,6 +130,13 @@ class RkMotorBoard:
                 break
             time.sleep(0.05)
         time.sleep(0.4)
+        # EVO 保活短窗可能把刚发现的电机误标离线；按 init 名单恢复一次。
+        if self.evo is not None:
+            for mid in getattr(self.evo, "_active_ids", []):
+                idx = mid - 1
+                if 0 <= idx < len(self.evo.is_connected):
+                    self.evo.is_connected[idx] = True
+                    self.evo._loss_count[idx] = 0
         self.online = self.online_ids()
 
     def online_ids(self) -> set[int]:

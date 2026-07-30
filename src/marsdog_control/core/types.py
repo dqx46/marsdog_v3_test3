@@ -72,7 +72,8 @@ class UserCommand:
     request_dir: Optional[Direction] = None
     pace: bool = False                           # 手柄 dpad 触发 pace 意图
     has_stick: bool = False                      # 手柄在线且本帧提供摇杆量(键盘-only 时 False)
-    request_lie_down: bool = False               # 趴下请求(手柄 LT 边沿)
+    request_lie_down: bool = False               # 趴下请求(手柄 LT / 键盘 p)
+    request_sit: bool = False                    # 坐下请求(键盘 z)
     request_bark: bool = False                   # 狗叫/狗头动作请求(手柄 RT 边沿)
     estop: bool = False                          # 紧急停止
     quit: bool = False                           # 正常退出

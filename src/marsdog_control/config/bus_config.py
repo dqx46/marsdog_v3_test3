@@ -13,8 +13,8 @@
   plughw:CARD=Device,DEV=0 → USB 喇叭/声卡
 
 首次配置或更换 Hub 后运行:
-  python3 setup_usb_devices.py
-  sudo python3 setup_usb_devices.py --install
+  python3 -m marsdog_control.apps.tools.diagnostics.setup_usb_devices
+  sudo python3 -m marsdog_control.apps.tools.diagnostics.setup_usb_devices --install
 """
 
 import glob
@@ -41,9 +41,10 @@ _DEVICE_ALIASES = {
 }
 
 _DEVICE_FALLBACKS = {
-    # 2026-07-29 串口扫描实测。换物理插口后请重新运行 setup_usb_devices.py。
+    # 2026-07-30 串口扫描实测。换物理插口后请重新运行 setup_usb_devices.py。
     # Hub fc800000: 口1.1=灵足CAN-A, 口1.2=EVO, 口1.3=灵足CAN-B
-    # Hub fc880000: 口1.1.1=因克斯(CH340), 口1.1.3=达妙u2can, 口1.2=WT901 IMU
+    # Hub fc880000: 口1.1.1=因克斯(CH340), 口1.1.2=未识别备用口,
+    #               口1.1.3=达妙u2can, 口1.3=WT901 IMU
     "lz_can_a": [
         "/dev/serial/by-path/platform-fc800000.usb-usb-0:1.1:1.0-port0",
         "/dev/ttyUSB0",
@@ -59,9 +60,10 @@ _DEVICE_FALLBACKS = {
     # CH340 无唯一序列号：禁止用 by-id/ttyUSBn 回退，否则会误绑到灵足/EVO 的口。
     "incos_can": [
         "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.1.1:1.0-port0",
+        "/dev/ttyUSB4",
     ],
     "imu": [
-        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.2:1.0-port0",
+        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.3:1.0-port0",
         "/dev/ttyUSB1",
     ],
     "dm_can": [
@@ -70,18 +72,16 @@ _DEVICE_FALLBACKS = {
         "/dev/ttyACM0",
     ],
     "tail_485": [
-        "/dev/serial/by-path/platform-fc800000.usb-usb-0:1.1:1.0-port0",
         "/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_BG027R1O-if00-port0",
     ],
     "mouth_esp32": [
-        "/dev/serial/by-path/platform-fc800000.usb-usb-0:1.4:1.0-port0",
         "/dev/serial/by-id/usb-Hades2001_M5stack_E55260257C-if00-port0",
     ],
 }
 
 _GAMEPAD_CANDIDATES = [
+    "/dev/input/by-id/usb-S_TGZ_Controller_3E529650-joystick",
     "/dev/input/by-id/usb-S_TGZ_Controller_3E529630-joystick",
-    "/dev/input/by-path/platform-fc800000.usb-usb-0:1.4:1.0-joystick",
     "/dev/input/js0",
 ]
 

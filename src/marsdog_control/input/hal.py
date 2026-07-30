@@ -25,7 +25,7 @@ class WalkInputHAL:
     """Keyboard + gamepad boundary → (``UserCommand``, dev_key) + dev-tuning.
 
     Thresholds default to the canonical ``user_input`` constants; override only for
-    tuning. ``check_motors`` is the diagnostics hook the ``p`` dev key prints with.
+    tuning. ``check_motors`` is the diagnostics hook the ``i`` dev key prints with.
 
     ``gamepad`` stays ``object`` on purpose: it's a real HAL seam (device may be
     absent -> ``None``, or swapped for a fake in tests) with a wide attribute

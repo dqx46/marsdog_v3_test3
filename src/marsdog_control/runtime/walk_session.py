@@ -18,7 +18,7 @@ imported here so ``apps/walk.py`` stays a thin shell.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from marsdog_control.config.joints import (
     JOINT_MAP, JOINT_BY_ID, JOINT_BY_NAME as JBN,
@@ -96,6 +96,7 @@ class WalkSessionContext:
     save_trim_cal: Callable
     trim_cal_path: str
     control_hz: float
+    build_sit_target: Optional[Callable] = None
 
 
 def _direction_test_precheck(ctx: WalkSessionContext) -> bool:
@@ -208,6 +209,7 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
         bark_with_mouth=ctx.bark_with_mouth,
         backend=real_backend,
         build_lie_down_target=ctx.build_lie_down_target,
+        build_sit_target=ctx.build_sit_target,
         read_positions=svc.read_positions,
         smooth_transition=svc.smooth_transition,
         tail=tail,

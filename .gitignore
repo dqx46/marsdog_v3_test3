@@ -38,3 +38,4 @@ telemetry.csv
 telemetry.json
 telemetry_summary.json
 .pytest_cache/
+docs/.$marsdog_control_architecture.drawio.bkp

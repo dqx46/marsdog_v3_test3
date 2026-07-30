@@ -187,7 +187,11 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         from marsdog_control.core.types import RobotMode
         ctx.fsm.request_transition(RobotMode.ESTOP, targets_now=ctx.targets)
         return False
-    if cmd.request_lie_down:
+    if cmd.request_lie_down or cmd.request_sit:
+        pose = "sit" if cmd.request_sit else "lie_down"
+        # 同周期两键都按：坐下优先（少见）
+        if cmd.request_sit and cmd.request_lie_down:
+            pose = "sit"
         lie_res = ctx.lie_down_session.handle_request(
             fsm=ctx.fsm,
             online=ctx.online,
@@ -200,6 +204,8 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
             dm_tarsus_active=ctx.dm_tarsus_active,
             smooth_tgt=ctx.smooth_tgt,
             safety=ctx.safety,
+            pose=pose,
+            mono=clock.monotonic(),
         )
         if lie_res.targets is not None:
             ctx.targets = dict(lie_res.targets)
@@ -227,11 +233,15 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
     throttle = ctx.fsm.throttle
     mode = mode_str(ctx.fsm)
     if ctx.tail is not None:
-        ctx.tail.set_mode(
-            "lie_down" if ctx.lie_down_session.hold else
-            "trot" if active_trot is not None else
-            "stand"
-        )
+        if ctx.lie_down_session.hold:
+            tail_mode = ("sit" if ctx.lie_down_session.active_pose == "sit"
+                         else "lie_down")
+        elif active_trot is not None:
+            tail_mode = "trot"
+        else:
+            tail_mode = "stand"
+        # TailController 仅识别 stand/trot/lie_down；sit 暂按 lie_down 行为
+        ctx.tail.set_mode("lie_down" if tail_mode == "sit" else tail_mode)
 
     # ── IMU 闭环 ──
     balance = ctx.balance_runtime.update(
@@ -271,6 +281,9 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
     if getattr(ctx.executor.config, "wbc_enabled", False) and getattr(
         ctx.executor.config, "disable_imu_foot_balance", True
     ):
+        imu_dz = {"fl": 0.0, "fr": 0.0, "rl": 0.0, "rr": 0.0}
+    # 姿势保持：目标已是捕获关节角，禁止 IMU 足高再改（防 hold 首帧抽一下）
+    if ctx.lie_down_session.hold:
         imu_dz = {"fl": 0.0, "fr": 0.0, "rl": 0.0, "rr": 0.0}
     
     # ── Motion planner ──
@@ -318,9 +331,21 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
 
     # ── Executor (explicit runtime state, no walk globals) ──
     rt.sync_executor_config(ctx.executor)
-    output = ctx.executor.build(
-        state, safe_motion, ctx.fsm,
-        active_gait=active_trot, t_rel=t_rel, clock=clock)
+    # 姿势 hold：重力补偿从 0 缓入，对齐 smooth_transition（无动态 τ_g）接缝
+    _ex_cfg = ctx.executor.config
+    _grav_saved = (_ex_cfg.gravity_comp, float(_ex_cfg.gravity_scale))
+    if ctx.lie_down_session.hold:
+        blend = ctx.lie_down_session.hold_grav_blend(clock.monotonic())
+        if blend <= 1e-6:
+            _ex_cfg.gravity_comp = False
+        else:
+            _ex_cfg.gravity_scale = _grav_saved[1] * blend
+    try:
+        output = ctx.executor.build(
+            state, safe_motion, ctx.fsm,
+            active_gait=active_trot, t_rel=t_rel, clock=clock)
+    finally:
+        _ex_cfg.gravity_comp, _ex_cfg.gravity_scale = _grav_saved
     velocities = output.target.dq
     kp_phase = output.kp_phase
     trq_ff = output.trq_ff
@@ -374,6 +399,7 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         imu=ctx.imu,
         imu_dz=imu_dz,
         lie_down_hold=ctx.lie_down_session.hold,
+        pose_hold_name=ctx.lie_down_session.active_pose,
         joint_direction_test=ctx.joint_direction_test,
         hip_abd_test=ctx.hip_abd_test,
         leg_pitch_test=ctx.leg_pitch_test,
