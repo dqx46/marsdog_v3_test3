@@ -112,6 +112,92 @@ def lateral_offset_pace(t: float, period: float, stance_ratio: float,
     )
 
 
+def lateral_offset_walk(t: float, period: float, lateral_sway: float) -> float:
+    """四拍 Walk 横向重心 — 抬腿前把 CoM 挪进支撑侧（事件型，非纯余弦）。
+
+    抬腿序 rl→fl→rr→fr @ ~0/0.25/0.5/0.75。左侧抬腿窗口 CoM 偏右（负），
+    右侧抬腿窗口 CoM 偏左（正）。过渡用 smoothstep，避免僵尸正弦。
+    lat_offset>0 → 身体左移。
+    """
+    phase = (t / period) % 1.0
+    return walk_weight_shift_sign(phase) * lateral_sway
+
+
+def walk_weight_shift_sign(phase: float, blend: float = 0.10) -> float:
+    """Global gait phase → CoM side sign (−1=right, +1=left).
+
+    Left-swing half starts at phase≈0 (RL lift): already holding right (−1).
+    Transition to left (+1) around 0.5 before RR/FR lifts; return to right near 1.0.
+    """
+    p = phase % 1.0
+    w = max(1e-3, min(0.20, float(blend)))
+
+    def _ss(x: float) -> float:
+        x = 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
+        return x * x * (3.0 - 2.0 * x)
+
+    if p < 0.5 - w:
+        return -1.0
+    if p < 0.5 + w:
+        a = _ss((p - (0.5 - w)) / (2.0 * w))
+        return -1.0 * (1.0 - a) + 1.0 * a
+    if p < 1.0 - w:
+        return 1.0
+    a = _ss((p - (1.0 - w)) / w)
+    return 1.0 * (1.0 - a) + (-1.0) * a
+
+
+def walk_com_y_shift(t: float, period: float, sway_m: float) -> float:
+    """MPC 期望 CoM 侧移 (body +Y=左)，与 ``lateral_offset_walk`` 同相。"""
+    return lateral_offset_walk(t, period, sway_m)
+
+
+def natural_walk_x(phase: float, amp: float, cx: float, stance_ratio: float,
+                   retract: float, retract_peak: float) -> tuple:
+    """Walk 足端 X：支撑相近匀速（躯干速度平稳）；摆动相 Hermite + 前段回缩。
+
+    SoftTrot MJ 支撑相会脉冲前进；Walk 用线性 stance，柔软只放在摆动。
+    """
+    sr = stance_ratio
+    if phase < sr:
+        stance_t = phase / sr
+        x = cx + amp * (1.0 - 2.0 * stance_t)
+        return x, False, stance_t
+    swing_t = (phase - sr) / max(1e-6, 1.0 - sr)
+    # Match stance end velocity for C1 at LO: dx/d(stance_t)=−2amp →
+    # in swing_t: m_swing = −2amp * (1−sr)/sr
+    m = -2.0 * amp * (1.0 - sr) / max(1e-6, sr)
+    u = swing_t
+    u2 = u * u
+    u3 = u2 * u
+    h00 = 2.0 * u3 - 3.0 * u2 + 1.0
+    h10 = u3 - 2.0 * u2 + u
+    h01 = -2.0 * u3 + 3.0 * u2
+    h11 = u3 - u2
+    x = cx + h00 * (-amp) + h10 * m + h01 * amp + h11 * m
+    # Early fold (cat-step retract), peak early in swing.
+    x -= retract * minimum_jerk_bump(swing_t, retract_peak)
+    return x, True, swing_t
+
+
+def natural_walk_swing_z(swing_t: float, step_h: float, lift_peak: float) -> float:
+    """Walk 摆动 Z：峰偏前（快抬），后段更低接近软着地。"""
+    return step_h * minimum_jerk_bump(swing_t, lift_peak)
+
+
+def natural_walk_stance_lift(stance_t: float, touchdown_compress: float,
+                             toeoff_lift: float) -> float:
+    """Walk 支撑相 Z：轻触地缓冲 + 离地前微抬，无对角 anti-roll。"""
+    td = (
+        minimum_jerk_bump(min(stance_t / 0.20, 1.0), 0.40)
+        if stance_t < 0.20 else 0.0
+    )
+    toe = (
+        minimum_jerk_bump((stance_t - 0.85) / 0.15, 0.55)
+        if stance_t > 0.85 else 0.0
+    )
+    return touchdown_compress * td + toeoff_lift * toe
+
 def expected_diagonal_roll(t: float, period: float, stance_ratio: float,
                             roll_ff_neg_deg: float, roll_ff_pos_deg: float) -> float:
     """对角 Trot 支撑引起的预期 roll (度), 半正弦包络, 支撑中期达峰。"""

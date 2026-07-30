@@ -35,11 +35,16 @@ class LieDownSession:
                        smooth_tgt=None, safety=None) -> LieDownSessionResult:
         if self.hold:
             print("\n[lie-down] LT再次触发: 从趴下姿势缓慢起立 (4.0s)...")
-            stand_targets = fsm.stand.get_targets(0)
+            stand_targets = fsm.stand.get_targets(0)          # URDF 空间(供 fsm/主循环)
             stand_targets = {
                 mid: q for mid, q in stand_targets.items()
                 if mid in online
             }
+            # 起立过渡是直连 send_all(电机空间), cur_stand 来自 get_angles/read_positions
+            # 也是电机空间; 站姿目标是 URDF, 必须经唯一真源映射转到电机空间, 否则
+            # sign=-1 的左侧关节会反向(与 fade/shutdown 同一个坐标系错配 bug)。
+            from marsdog_control.backends.real import urdf_pose_to_motor
+            stand_targets_motor = urdf_pose_to_motor(stand_targets)
             cur_stand = self.read_positions(lz, evo, incos)
             if dm is not None and dm_tarsus_active and board is not None:
                 cur_stand.update(board.get_angles((4, 8), include_dm=True))
@@ -50,7 +55,7 @@ class LieDownSession:
             if safety is not None:
                 safety.reset()
             if not self.smooth_transition(
-                    lz, evo, dm, incos, cur_stand, stand_targets,
+                    lz, evo, dm, incos, cur_stand, stand_targets_motor,
                     self.transition_s, label="lie-stand"):
                 return LieDownSessionResult(handled=True, break_loop=True)
             self.hold = False
@@ -82,11 +87,16 @@ class LieDownSession:
                 lz, evo, dm, incos, cur_lie, lie_targets,
                 self.transition_s, label="lie-down"):
             return LieDownSessionResult(handled=True, break_loop=True)
-        self.targets = dict(lie_targets)
+        # 直连过渡用电机帧(lie_targets=捕获的电机帧姿势, 与 cur_lie 同域, 正确)。
+        # 但主循环"保持趴下"时 self.targets 会经 backend.send(×sign×gear)下发, 若仍存
+        # 电机帧 → 左侧 sign=-1 关节反向、tarsus gear=2 翻倍。故存 URDF 帧供循环消费。
+        from marsdog_control.backends.real import motor_pose_to_urdf
+        lie_targets_urdf = motor_pose_to_urdf(lie_targets)
+        self.targets = lie_targets_urdf
         self.hold = True
         print("\n[lie-down] 已趴下, 保持该姿势；再次按 LT 起立，按 q/ESC 退出并缓速失能")
         return LieDownSessionResult(
-            handled=True, continue_loop=True, targets=dict(lie_targets))
+            handled=True, continue_loop=True, targets=dict(lie_targets_urdf))
 
 
 __all__ = ["LieDownSession", "LieDownSessionResult"]

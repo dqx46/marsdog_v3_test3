@@ -61,8 +61,13 @@ def run_walk_shutdown(ctx: WalkShutdownContext) -> None:
 
     _save_auto_trim_calibration(ctx)
 
+    # cur2 是电机空间(board.get_angles); stand.get_targets() 是纯 URDF 空间。
+    # smooth_transition / soft_disable 均直连电机空间, 必须经唯一真源映射把站姿
+    # 目标转到电机空间(等价主控 backend.send 的 j.sign), 否则回站立/失能时 sign=-1
+    # 的左侧关节会反向(与淡入同一个坐标系错配 bug)。
+    from marsdog_control.backends.real import urdf_pose_to_motor
     cur2 = ctx.board.get_angles(include_dm=ctx.dm_tarsus_active)
-    stand_final = ctx.stand.get_targets(0)
+    stand_final = urdf_pose_to_motor(ctx.stand.get_targets(0))
     if ctx.joint_direction_test:
         print("\n\n[cleanup] 关节方向测试 -> 回正常站姿 (1.5s)...")
         ctx.smooth_transition(

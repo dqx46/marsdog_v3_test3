@@ -175,6 +175,10 @@ def parse_args():
     p.add_argument("--natural-soft-trot", action=argparse.BooleanOptionalAction,
                    default=CLI.natural_soft_trot,
                    help="启动低冲击自然 Trot；正式默认开启，可用 --no-natural-soft-trot 临时关闭")
+    p.add_argument("--natural-walk", action="store_true",
+                   help="四拍真狗慢走(NaturalWalk)；与 SoftTrot/Spot 解耦，默认仍 SoftTrot")
+    p.add_argument("--jump", action="store_true",
+                   help="原地 hop(Jump)；与 SoftTrot/Walk/Spot 解耦；覆盖 --natural-walk")
     # 达妙无掉电零点记忆: 约定每次上电前手动掰到硬限位物理基准。不再用 CLI 开关确认。
     p.add_argument("--dm-kp-fl", type=float, default=CLI.dm_kp_fl,
                    help="[tarsus] 左前达妙 KP，默认220")

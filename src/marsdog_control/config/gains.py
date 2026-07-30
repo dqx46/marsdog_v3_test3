@@ -12,6 +12,9 @@ from __future__ import annotations
 # remaining high-RMS joints at period≤1s; hips are OK at 120/10 with vel FF.
 # 2026-07-21b: FR calf/tarsus tracked worse than FL at identical gains → bump
 # FR only (mechanical asymmetry), keep FL.
+# 2026-07-30: sim 与真机共用 JOINT_GAINS。真机因克斯 thigh_roll 软化
+# (70/1.5, 80/2.0) 会让仿真欠阻尼起步蹦跳；此处保持原版 sim 增益。
+# 真机软化应放到 Real-only 覆盖，勿改本表。
 JOINT_GAINS = {
     "fl_hip_pitch":  {"kp": 150.0, "kd": 5.0, "trq_ff": 0.0},
     "fr_hip_pitch":  {"kp": 150.0, "kd": 5.0, "trq_ff": 0.0},

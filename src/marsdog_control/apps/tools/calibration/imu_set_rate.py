@@ -124,6 +124,31 @@ def write_rate(port, baud, rate_hz, trim_content=True):
         time.sleep(0.30)
 
 
+def ensure_rate(port, baud, rate_hz=200, *, measure_s=0.0):
+    """若 RRATE 不是目标值则写入+SAVE；已正确则跳过（避免反复刷 flash）。
+
+    Returns ``(ok, message, rate_hz_measured_or_None)``.
+    """
+    if rate_hz not in RATE_CODES:
+        return False, f"不支持的速率 {rate_hz}", None
+    want = RATE_CODES[rate_hz]
+    cur = read_reg(port, baud, REG_RRATE)
+    if cur is not None and (cur & 0xFF) == want:
+        measured = None
+        if measure_s > 0.0:
+            measured = measure(port, baud, measure_s)["angle_hz"]
+        return True, f"RRATE 已是 {rate_hz}Hz (0x{want:02X})", measured
+    trim = rate_hz > _TRIM_CONTENT_ABOVE_HZ
+    write_rate(port, baud, rate_hz, trim_content=trim)
+    cur2 = read_reg(port, baud, REG_RRATE)
+    if cur2 is None or (cur2 & 0xFF) != want:
+        return False, f"写入后 RRATE 仍非 0x{want:02X}", None
+    measured = None
+    if measure_s > 0.0:
+        measured = measure(port, baud, measure_s)["angle_hz"]
+    return True, f"已持久化 RRATE→{rate_hz}Hz (0x{want:02X})+SAVE", measured
+
+
 def print_result(label, result):
     print(
         f"[{label}] acc/gyro/angle="

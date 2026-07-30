@@ -101,6 +101,10 @@ def make_controllers(args, startup):
         gp_trot_threshold=0.3,
         gp_deadzone=0.12,
         natural_soft=startup.natural_soft,
+        natural_walk=getattr(startup, "natural_walk", False),
+        walk_params=getattr(startup, "walk_params", None),
+        natural_jump=getattr(startup, "natural_jump", False),
+        jump_params=getattr(startup, "jump_params", None),
         trot_flag=startup.trot_flag,
         no_spine=startup.no_spine,
         load_trim_cal=lambda: None
@@ -169,18 +173,32 @@ def main():
                 pass
             i += 1
             continue
-        if a in ("--headless", "--natural-soft-trot", "--vmc", "--no-vmc", "--wbc", "--no-wbc"):
+        if a in ("--headless", "--natural-soft-trot", "--natural-walk", "--jump",
+                 "--vmc", "--no-vmc", "--wbc", "--no-wbc"):
             i += 1
             continue
         filtered.append(a)
         i += 1
 
     forced = ["--natural-soft-trot"]
+    user_wants_jump = "--jump" in old_argv
+    user_wants_walk = "--natural-walk" in old_argv
+    if user_wants_jump:
+        forced.append("--jump")
+    elif user_wants_walk:
+        forced.append("--natural-walk")
+    # 控制器三态显式化: 不再"未开 --wbc 就静默塞 --vmc"。
+    #   --wbc        → WBC+MPC (覆盖 VMC)
+    #   --vmc        → 解耦 VMC (软腿 + Z/Roll 雅可比 trq_ff)
+    #   两者都不给   → 干净基线: 裸关节阻抗 + 重力补偿 (--no-vmc --no-wbc)
     user_wants_wbc = "--wbc" in old_argv and "--no-wbc" not in old_argv
+    user_wants_vmc = "--vmc" in old_argv and "--no-vmc" not in old_argv
     if user_wants_wbc:
         forced.extend(["--wbc", "--no-vmc"])
-    elif "--vmc" not in old_argv and "--no-vmc" not in old_argv:
-        forced.append("--vmc")
+    elif user_wants_vmc:
+        forced.extend(["--vmc", "--no-wbc"])
+    else:
+        forced.extend(["--no-vmc", "--no-wbc"])
     # Real-parity default: estimator path unless user explicitly asks for truth.
     if not any(
         a == "--base-estimate-mode" or a.startswith("--base-estimate-mode=")
@@ -225,7 +243,10 @@ def main():
             f"(软腿 + Z/Roll 雅可比 trq_ff)"
         )
     else:
-        print("[Sim] VMC/WBC OFF")
+        print(
+            f"[Sim] 基线 (VMC/WBC OFF)  leg_kp_scale={runtime_state.leg_kp_scale:.2f}  "
+            f"(裸关节阻抗 + 重力补偿, gravity_comp={runtime_state.gravity_comp})"
+        )
 
     # 2. Controllers → Stand 决定初始 qpos
     stack = make_controllers(args, startup)
@@ -235,7 +256,11 @@ def main():
     imu_ctrl = stack.imu_ctrl
 
     # 3. Backend（用 recipe 站高初始化，避免默认 0.22m 与 gait 不一致）
-    physics = SimPhysicsOptions()
+    # Jump: slightly harder foot contact so push force doesn't bury soft soles.
+    if getattr(startup, "natural_jump", False):
+        physics = SimPhysicsOptions(foot_solref=(0.004, 1.0))
+    else:
+        physics = SimPhysicsOptions()
     backend = SimRobotBackend(stand_controller=stand, physics_options=physics)
 
     # 4. Fakes / HW
@@ -258,8 +283,14 @@ def main():
         from marsdog_control.core.types import UserCommand, RobotMode
         cmd = UserCommand()
         if fake_poll.tick == 200:
-            cmd.request_mode = RobotMode.NATURAL
-            print("[Sim] Auto-triggering NaturalSoftTrot via UserCommand...")
+            if getattr(startup, "natural_jump", False):
+                target = RobotMode.JUMP
+            elif getattr(startup, "natural_walk", False):
+                target = RobotMode.WALK
+            else:
+                target = RobotMode.NATURAL
+            cmd.request_mode = target
+            print(f"[Sim] Auto-triggering {target.value} via UserCommand...")
         if fake_poll.tick > 200:
             cmd.vx = drive_vx
             cmd.turn = drive_turn
@@ -321,8 +352,8 @@ def main():
                     viewer.cam.lookat[2] = 0.15
                     viewer.sync()
                     elapsed = time.time() - last_wall
-                    last_wall = time.time()
                     time.sleep(max(0.0, 0.005 - elapsed))
+                    last_wall = time.time()
         else:
             import math
             import numpy as np

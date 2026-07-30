@@ -1,11 +1,11 @@
 """USB-CAN / IMU / 手柄 / 喇叭设备路径配置。
 
-总线拓扑 (2026-07-22 因克斯独立总线):
-  /dev/marsdog_lz_can_a   → 灵足 CAN-A (前腿髋/大腿 + head_roll): ID 1,2,5,6,17
-  /dev/marsdog_incos_can  → 因克斯独立 USB-CAN (前腿小腿):         ID 3,7
-  /dev/marsdog_lz_can_b   → 灵足 CAN-B (后腿从 + 头/腰):           ID 10,11,13,14,15,16,21
-  /dev/marsdog_evo_can    → 泉智博 EVO (后腿hip + 颈腰):            ID 9,12,18,19,20
-  /dev/marsdog_dm_can     → 达妙 u2can (前腿 tarsus S2325):         ID 4,8
+总线拓扑 (2026-07-29 前腿大腿改因克斯):
+  /dev/marsdog_lz_can_a   → 灵足 CAN-A (前腿髋 + head_roll):           ID 1,5,17
+  /dev/marsdog_incos_can  → 因克斯独立 USB-CAN (前腿大腿+小腿):         ID 2,3,6,7
+  /dev/marsdog_lz_can_b   → 灵足 CAN-B (后腿从 + 头/腰):               ID 10,11,13,14,15,16,21
+  /dev/marsdog_evo_can    → 泉智博 EVO (后腿hip + 颈腰):                ID 9,12,18,19,20
+  /dev/marsdog_dm_can     → 达妙 u2can (前腿 tarsus S2325, 外置1:2):   ID 4,8
   /dev/marsdog_imu        → WT901G4K IMU
   /dev/marsdog_tail_485   → FTDI USB-RS485 尾巴电机通讯
   /dev/marsdog_mouth      → ESP32/M5Stack 嘴巴控制器
@@ -41,33 +41,31 @@ _DEVICE_ALIASES = {
 }
 
 _DEVICE_FALLBACKS = {
-    # 2026-07-22 串口扫描实测。换物理插口后请重新运行 setup_usb_devices.py。
-    # Hub fc800000: 口1.1=灵足CAN-A(前腿主关节+head_roll), 口1.2=EVO(后腿hip+颈腰),
-    #               口1.3=灵足CAN-B(后腿从+头/腰)
-    # Hub fc880000: 口1.1.4=因克斯独立USB-CAN(CH340), 口1.2=达妙u2can(前腿tarsus),
-    #               口1.3=WT901 IMU
+    # 2026-07-29 串口扫描实测。换物理插口后请重新运行 setup_usb_devices.py。
+    # Hub fc800000: 口1.1=灵足CAN-A, 口1.2=EVO, 口1.3=灵足CAN-B
+    # Hub fc880000: 口1.1.1=因克斯(CH340), 口1.1.3=达妙u2can, 口1.2=WT901 IMU
     "lz_can_a": [
         "/dev/serial/by-path/platform-fc800000.usb-usb-0:1.1:1.0-port0",
         "/dev/ttyUSB0",
     ],
     "evo_can": [
         "/dev/serial/by-path/platform-fc800000.usb-usb-0:1.2:1.0-port0",
-        "/dev/ttyUSB1",
+        "/dev/ttyUSB2",
     ],
     "lz_can_b": [
         "/dev/serial/by-path/platform-fc800000.usb-usb-0:1.3:1.0-port0",
-        "/dev/ttyUSB2",
+        "/dev/ttyUSB3",
     ],
     # CH340 无唯一序列号：禁止用 by-id/ttyUSBn 回退，否则会误绑到灵足/EVO 的口。
     "incos_can": [
-        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.1.4:1.0-port0",
+        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.1.1:1.0-port0",
     ],
     "imu": [
-        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.3:1.0-port0",
+        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.2:1.0-port0",
         "/dev/ttyUSB1",
     ],
     "dm_can": [
-        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.2:1.0",
+        "/dev/serial/by-path/platform-fc880000.usb-usb-0:1.1.3:1.0",
         "/dev/serial/by-id/usb-HDSC_CDC_Device_00000000050C-if00",
         "/dev/ttyACM0",
     ],

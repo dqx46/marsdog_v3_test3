@@ -132,7 +132,8 @@ def build_context():
         natural_params=None,
         pace_use_stand_offsets=False,
     )
-    stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd, nat_fwd = controllers.as_tuple()
+    (stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd,
+     nat_fwd, walk_fwd, jump_fwd) = controllers.as_tuple()
 
     fsm = RuntimeStateMachine(
         controllers, FsmDriveConfig.from_args(args),
@@ -151,6 +152,8 @@ def build_context():
         "pace_fwd": pace_fwd,
         "pace_bwd": pace_bwd,
         "nat_fwd": nat_fwd,
+        "walk_fwd": walk_fwd,
+        "jump_fwd": jump_fwd,
         "fsm": fsm,
         "RobotMode": RobotMode,
     }

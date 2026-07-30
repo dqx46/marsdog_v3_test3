@@ -160,6 +160,57 @@ class GaitEnvelope:
             spot_com_shift_m=0.0,
         )
 
+    @classmethod
+    def from_walk(
+        cls,
+        *,
+        amp_front: float,
+        amp_rear: float,
+        period: float,
+        stance: float,
+        step_h_front: Optional[float] = None,
+        step_h_rear: Optional[float] = None,
+        step_h_front_floor: Optional[float] = None,
+        step_h_rear_floor: Optional[float] = None,
+        throttle_min_scale: float = 0.55,
+        vx_engage: float = 0.3,
+        vx_deadzone: float = 0.12,
+    ) -> "GaitEnvelope":
+        """Four-beat Walk envelope — high duty, slow cadence; no spot fields used."""
+        sh_f = float(step_h_front) if step_h_front is not None else 0.034
+        sh_r = float(step_h_rear) if step_h_rear is not None else max(sh_f, 0.038)
+        fl_f = (
+            float(step_h_front_floor)
+            if step_h_front_floor is not None
+            else min(0.022, max(0.014, 0.55 * sh_f))
+        )
+        fl_r = (
+            float(step_h_rear_floor)
+            if step_h_rear_floor is not None
+            else min(0.028, max(0.018, 0.60 * sh_r))
+        )
+        return cls(
+            amp_front_max=float(amp_front),
+            amp_rear_max=float(amp_rear),
+            step_h_front_max=sh_f,
+            step_h_rear_max=sh_r,
+            step_h_front_floor=fl_f,
+            step_h_rear_floor=fl_r,
+            period_nom=float(period),
+            period_min=max(0.88, float(period) * 0.94),
+            period_max=min(1.25, float(period) * 1.10),
+            stance_nom=float(stance),
+            stance_min=max(0.68, float(stance) - 0.03),
+            stance_max=min(0.78, float(stance) + 0.03),
+            throttle_min_scale=float(throttle_min_scale),
+            cruise_turn_scale=0.0,  # v1: forward-only
+            cruise_turn_yamp=0.0,
+            cruise_turn_y_amp_m=0.0,
+            cruise_turn_amp_diff_m=0.0,
+            vx_engage=float(vx_engage),
+            vx_deadzone=float(vx_deadzone),
+        )
+
 
 @dataclass(frozen=True)
 class GaitScheduleOutput:
@@ -286,8 +337,149 @@ class SoftTrotSchedule:
         )
 
 
+@dataclass(frozen=True)
+class JumpScheduleOutput:
+    """Jump stick map — trigger / rejump only; no Soft amp or spot fields."""
+
+    trigger: bool = False
+    auto_rejump: bool = False
+    vel_cmd: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    speed_frac: float = 0.0
+
+
+class JumpSchedule:
+    """In-place hop intent — stick hold → trigger+rejump; release → idle.
+
+    Never enables spot turn; yaw stick ignored in v1.
+    """
+
+    def __init__(self, *, vx_deadzone: float = 0.12):
+        self.vx_deadzone = float(vx_deadzone)
+
+    def map(self, cmd: VelocityCommand) -> JumpScheduleOutput:
+        intent = abs(float(cmd.vx)) >= self.vx_deadzone
+        return JumpScheduleOutput(
+            trigger=intent,
+            auto_rejump=intent,
+            vel_cmd=(0.0, 0.0, 0.0),
+            speed_frac=1.0 if intent else 0.0,
+        )
+
+
+def apply_jump_schedule(gait, sched: JumpScheduleOutput) -> None:
+    """Write Jump schedule onto JumpController only."""
+    if getattr(gait, "family", None) != "jump":
+        return
+    gait.spot_turn_active = False
+    gait.vel_cmd = sched.vel_cmd
+    gait.speed_frac = float(sched.speed_frac)
+    gait.auto_rejump = bool(sched.auto_rejump)
+    if sched.trigger:
+        gait.request_jump(True)
+    else:
+        gait.trigger = False
+        gait.auto_rejump = False
+
+
+class WalkSchedule:
+    """Four-beat Walk velocity map — forward only; never enables spot turn.
+
+    Yaw stick is ignored in v1 (turn via SoftTrot / Spot path instead).
+    """
+
+    def __init__(self, envelope: Optional[GaitEnvelope] = None):
+        self.env = envelope or GaitEnvelope.from_walk(
+            amp_front=0.040, amp_rear=0.048, period=1.05, stance=0.74,
+        )
+
+    def map(self, cmd: VelocityCommand) -> GaitScheduleOutput:
+        e = self.env
+        vx = float(cmd.vx)
+        mag = min(1.0, abs(vx))
+
+        if mag < e.vx_deadzone:
+            u = 0.0
+            speed_frac = 0.0
+        else:
+            span = max(1e-6, 1.0 - e.vx_deadzone)
+            u = max(0.0, min(1.0, (mag - e.vx_deadzone) / span))
+            speed_frac = e.throttle_min_scale + (1.0 - e.throttle_min_scale) * u
+
+        sign = 1.0 if vx >= 0.0 else -1.0
+        amp_f = sign * e.amp_front_max * speed_frac
+        amp_r = sign * e.amp_rear_max * speed_frac
+        if speed_frac > 1e-9:
+            step_f = max(e.step_h_front_floor, e.step_h_front_max * speed_frac)
+            step_r = max(e.step_h_rear_floor, e.step_h_rear_max * speed_frac)
+        else:
+            step_f = 0.0
+            step_r = 0.0
+
+        period = e.period_max + (e.period_min - e.period_max) * u
+        stance = e.stance_max + (e.stance_min - e.stance_max) * u
+        if speed_frac <= 1e-9:
+            period = e.period_nom
+            stance = e.stance_nom
+
+        from marsdog_control.control.velocity_model import VX_SCRUB_OFFSET_MPS
+
+        avg_amp = 0.5 * (abs(amp_f) + abs(amp_r))
+        if speed_frac > 0:
+            vx_kin = sign * (2.0 * avg_amp / max(1e-3, period))
+            vx_si = vx_kin + sign * float(VX_SCRUB_OFFSET_MPS)
+        else:
+            vx_si = 0.0
+
+        return GaitScheduleOutput(
+            amp_front=amp_f,
+            amp_rear=amp_r,
+            step_height_front=float(step_f),
+            step_height=float(step_r),
+            period=float(period),
+            stance_ratio=float(stance),
+            turn_cmd=0.0,
+            turn_y_gain=0.0,
+            vel_cmd=(float(vx_si), float(cmd.vy), 0.0),
+            speed_frac=float(speed_frac),
+            turn_y_amp=0.0,
+            turn_amp_diff=0.0,
+            spot_turn=False,
+            spot_y_hold_max=float(e.spot_y_hold_max_m),
+            spot_yaw_step=float(e.spot_yaw_step_rad),
+            spot_dx_scale=0.0,
+            spot_com_shift=0.0,
+        )
+
+
 def apply_schedule_to_gait(gait, sched: GaitScheduleOutput) -> None:
     """Write schedule fields onto a live gait controller instance."""
+    family = getattr(gait, "family", None)
+    # Jump uses JumpSchedule / apply_jump_schedule — never Soft amp/period/spot.
+    if family == "jump":
+        return
+    is_walk = family == "walk"
+    # Walk stack never accepts spot; force schedule fields safe before write.
+    if is_walk and sched.spot_turn:
+        sched = GaitScheduleOutput(
+            amp_front=sched.amp_front,
+            amp_rear=sched.amp_rear,
+            step_height_front=sched.step_height_front,
+            step_height=sched.step_height,
+            period=sched.period,
+            stance_ratio=sched.stance_ratio,
+            turn_cmd=0.0,
+            turn_y_gain=0.0,
+            vel_cmd=(sched.vel_cmd[0], sched.vel_cmd[1], 0.0),
+            speed_frac=sched.speed_frac,
+            turn_y_amp=0.0,
+            turn_amp_diff=0.0,
+            spot_turn=False,
+            spot_y_hold_max=sched.spot_y_hold_max,
+            spot_yaw_step=sched.spot_yaw_step,
+            spot_dx_scale=0.0,
+            spot_com_shift=0.0,
+        )
+
     gait.amp_front = sched.amp_front
     gait.amp_rear = sched.amp_rear
     if hasattr(gait, "step_height_front"):
@@ -310,19 +502,33 @@ def apply_schedule_to_gait(gait, sched: GaitScheduleOutput) -> None:
 
     was_spot = bool(getattr(gait, "spot_turn_active", False))
     if hasattr(gait, "spot_turn_active"):
-        gait.spot_turn_active = bool(sched.spot_turn)
-        if was_spot and not sched.spot_turn and hasattr(gait, "_clear_spot_state"):
-            gait._clear_spot_state()
+        if is_walk:
+            gait.spot_turn_active = False
+            if was_spot and hasattr(gait, "_clear_spot_state"):
+                gait._clear_spot_state()
+        else:
+            gait.spot_turn_active = bool(sched.spot_turn)
+            if was_spot and not sched.spot_turn and hasattr(gait, "_clear_spot_state"):
+                gait._clear_spot_state()
 
-    # Spot: Unitree continuous diagonal trot-turn.
-    if hasattr(gait, "_PHASE_OFFSET") and hasattr(gait, "_PHASE_OFFSET_CRUISE"):
+    # Spot: Unitree continuous diagonal trot-turn (never rewrite Walk phases).
+    if (
+        not is_walk
+        and hasattr(gait, "_PHASE_OFFSET")
+        and hasattr(gait, "_PHASE_OFFSET_CRUISE")
+    ):
         if sched.spot_turn:
             gait._PHASE_OFFSET = dict(SPOT_DIAGONAL_PHASE)
         elif was_spot:
             gait._PHASE_OFFSET = dict(gait._PHASE_OFFSET_CRUISE)
 
     if hasattr(gait, "turn_filter_alpha"):
-        gait.turn_filter_alpha = 0.12 if sched.spot_turn else 0.015
+        gait.turn_filter_alpha = (
+            0.015 if is_walk else (0.12 if sched.spot_turn else 0.015)
+        )
+    if is_walk:
+        return
+
     if hasattr(gait, "spot_y_hold_max_m"):
         gait.spot_y_hold_max_m = float(sched.spot_y_hold_max)
     if hasattr(gait, "spot_yaw_step_rad"):
@@ -343,7 +549,11 @@ __all__ = [
     "GaitEnvelope",
     "GaitScheduleOutput",
     "SoftTrotSchedule",
+    "WalkSchedule",
+    "JumpSchedule",
+    "JumpScheduleOutput",
     "apply_schedule_to_gait",
+    "apply_jump_schedule",
     "SPOT_DIAGONAL_PHASE",
     "SPOT_STATIC_PHASE",
 ]

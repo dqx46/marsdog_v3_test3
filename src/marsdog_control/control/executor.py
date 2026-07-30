@@ -242,6 +242,7 @@ class CommandExecutor:
                 force_lpf_alpha=self.config.force_lpf_alpha,
                 max_df_dt=self.config.max_df_dt,
                 dt=0.005,
+                mpc_period_s=(float(dyn.mpc_period_s) if dyn is not None else 0.02),
             )
             self._estimator = BaseStateEstimator()
             self._contact = ContactSchedule(
@@ -314,6 +315,15 @@ class CommandExecutor:
         else:
             self._spot_swing_kp_boost = False
 
+        jump_gait = (
+            active_gait is not None
+            and getattr(active_gait, "family", None) == "jump"
+        )
+        self._jump_flight_swing_boost = bool(
+            jump_gait
+            and getattr(getattr(active_gait, "phase", None), "value", "") == "flight"
+        )
+
         # Phase-only prior (VMC / fallback). WBC overwrites via ContactSchedule.
         leg_is_stance = {leg: True for leg in _LEGS}
         if active_gait is not None:
@@ -341,6 +351,38 @@ class CommandExecutor:
             )
             self._first_print = False
 
+        # Jump: stiff crouch/push for launch; soft flight so fold doesn't yank body.
+        leg_kp_out = float(self.config.leg_kp_scale)
+        if (
+            active_gait is not None
+            and getattr(active_gait, "family", None) == "jump"
+        ):
+            phase_name = getattr(
+                getattr(active_gait, "phase", None), "value", ""
+            )
+            if phase_name == "crouch":
+                leg_kp_out = max(leg_kp_out, 1.25)
+            elif phase_name == "push":
+                # Firm track of extend without burying via excessive kp.
+                leg_kp_out = min(max(leg_kp_out, 1.00), 1.20)
+            elif phase_name == "flight":
+                # Short stiff extract, then soft so fold doesn't yank body down.
+                u = 0.0
+                if hasattr(active_gait, "_phase_u"):
+                    try:
+                        u = float(active_gait._phase_u(t_rel))
+                    except Exception:
+                        u = 0.0
+                if u < 0.15:
+                    leg_kp_out = min(max(leg_kp_out, 1.40), 1.55)
+                else:
+                    leg_kp_out = min(max(leg_kp_out, 0.45), 0.65)
+            elif phase_name == "land":
+                # Stiffer track so legs shorten with falling body (anti dig-bounce).
+                leg_kp_out = min(max(leg_kp_out, 0.85), 1.10)
+            elif phase_name == "recover":
+                leg_kp_out = min(max(leg_kp_out, 0.55), 0.75)
+
         return ControlOutput(
             target=MotionTarget(
                 q=targets, dq=velocities, source_mode=motion.source_mode
@@ -348,7 +390,7 @@ class CommandExecutor:
             kp_phase=kp_phase,
             trq_ff=trq_ff,
             kp_scale=self.config.kp_scale,
-            leg_kp_scale=self.config.leg_kp_scale,
+            leg_kp_scale=leg_kp_out,
             dm_active=fsm.dm_active() if hasattr(fsm, "dm_active") else False,
             gait_active=active_gait is not None,
             control_period_s=ctrl_dt,
@@ -460,18 +502,34 @@ class CommandExecutor:
         if getattr(self, "_spot_swing_kp_boost", False):
             kp *= 1.5
             kd *= 1.25
+        if getattr(self, "_jump_flight_swing_boost", False):
+            kp *= 1.4
+            kd *= 1.2
         dt = max(1e-3, self._ctrl_dt)
         out = {}
         # Always compute PD targets; WBC blends by force_scale (stance→0 weight).
         _ = leg_is_stance
         for leg in _LEGS:
-            p_des = foot_pos_des[leg]
+            p_des = foot_pos_des[leg].copy()
+            # Jump flight: gently lift desired foot clear of soft-contact dig.
+            if getattr(self, "_jump_flight_swing_boost", False):
+                p_des[2] = max(float(p_des[2]), 0.012)
             p_prev = self._foot_des_prev.get(leg, p_des)
             v_des_leg = (p_des - p_prev) / dt
             self._foot_des_prev[leg] = p_des.copy()
             p_act = foot_pos_act[leg]
             v_act = foot_vel_act[leg]
-            out[leg] = kp * (p_des - p_act) + kd * (v_des_leg - v_act)
+            acc = kp * (p_des - p_act) + kd * (v_des_leg - v_act)
+            # Jump flight: extra upward pull on still-buried feet (esp. front).
+            if getattr(self, "_jump_flight_swing_boost", False):
+                z_act = float(p_act[2])
+                if z_act < 0.012:
+                    pull = 55.0 * (0.012 - z_act)
+                    if leg in ("fl", "fr"):
+                        pull *= 1.4
+                    acc = acc.copy()
+                    acc[2] += pull
+            out[leg] = acc
         return out, foot_pos_des
 
     def _apply_wbc(
@@ -524,20 +582,48 @@ class CommandExecutor:
         contact_snap = None
         if self._contact is not None:
             # Spot: trust phase schedule — measurement was keeping 3–4 feet "stance".
+            # Walk: sharper LO/TD edges so short swing isn't eaten by SoftTrot blend.
             spot_now = bool(
                 active_gait is not None
                 and getattr(active_gait, "spot_turn_active", False)
             )
+            walk_now = bool(
+                active_gait is not None
+                and getattr(active_gait, "family", None) == "walk"
+            )
+            jump_now = bool(
+                active_gait is not None
+                and getattr(active_gait, "family", None) == "jump"
+            )
             cfg_prev = None
-            if spot_now:
+            if spot_now or walk_now or jump_now:
                 cfg_prev = (
                     float(self._contact.cfg.measure_force_weight),
                     float(self._contact.cfg.edge_blend),
                     float(self._contact.cfg.phase_late_lo),
+                    bool(self._contact.cfg.use_relative_z),
+                    float(self._contact.cfg.lo_height_m),
+                    float(self._contact.cfg.td_height_m),
+                    int(self._contact.cfg.hold_steps),
                 )
-                self._contact.cfg.measure_force_weight = 0.04
-                self._contact.cfg.edge_blend = 0.08
-                self._contact.cfg.phase_late_lo = 0.04
+                if spot_now:
+                    self._contact.cfg.measure_force_weight = 0.04
+                    self._contact.cfg.edge_blend = 0.08
+                    self._contact.cfg.phase_late_lo = 0.04
+                elif jump_now:
+                    # Soft land: wider TD window; absolute z so dig/peel don't
+                    # poison relative baselines (front stuck "contact" at +1cm).
+                    self._contact.cfg.measure_force_weight = 0.08
+                    self._contact.cfg.edge_blend = 0.10
+                    self._contact.cfg.phase_late_lo = 0.05
+                    self._contact.cfg.use_relative_z = False
+                    self._contact.cfg.lo_height_m = 0.008
+                    self._contact.cfg.td_height_m = 0.004
+                    self._contact.cfg.hold_steps = 3
+                else:
+                    self._contact.cfg.measure_force_weight = 0.10
+                    self._contact.cfg.edge_blend = 0.06
+                    self._contact.cfg.phase_late_lo = 0.03
             try:
                 contact_snap = self._contact.update(
                     t_rel=t_rel,
@@ -551,9 +637,59 @@ class CommandExecutor:
                         self._contact.cfg.measure_force_weight,
                         self._contact.cfg.edge_blend,
                         self._contact.cfg.phase_late_lo,
+                        self._contact.cfg.use_relative_z,
+                        self._contact.cfg.lo_height_m,
+                        self._contact.cfg.td_height_m,
+                        self._contact.cfg.hold_steps,
                     ) = cfg_prev
             leg_is_stance = dict(contact_snap.stance)
-            if spot_now:
+            if jump_now:
+                # Prefer truth vz (sim) so liftoff isn't stuck on lagged est / late note.
+                vz_meas = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[2])
+                if hasattr(active_gait, "note_base_vz"):
+                    active_gait.note_base_vz(vz_meas)
+                if hasattr(active_gait, "note_base_z"):
+                    active_gait.note_base_z(float(current_base_z))
+                if hasattr(active_gait, "_advance"):
+                    active_gait._advance(t_rel)
+                in_flight = bool(
+                    getattr(active_gait, "in_flight", lambda: False)()
+                )
+                if hasattr(active_gait, "stance_ratio"):
+                    active_gait.stance_ratio = 0.0 if in_flight else 1.0
+                phase_u = 0.0
+                if hasattr(active_gait, "_phase_u"):
+                    try:
+                        phase_u = float(active_gait._phase_u(t_rel))
+                    except Exception:
+                        phase_u = 0.0
+                # Same-tick retract: motion targets were computed while still PUSH.
+                if in_flight and hasattr(active_gait, "get_targets"):
+                    try:
+                        targets.update(active_gait.get_targets(t_rel))
+                    except Exception:
+                        pass
+                # Snap force EMA on flight entry — residual Fz on buried soles
+                # is the rear "second hop".
+                if in_flight and phase_u < 0.06 and self._force_planner is not None:
+                    self._force_planner._fc_filt[:] = 0.0
+                jfs = float(
+                    active_gait.jump_force_scale_at(t_rel)
+                    if hasattr(active_gait, "jump_force_scale_at")
+                    else (0.0 if in_flight else 1.0)
+                )
+                for leg in _LEGS:
+                    if in_flight:
+                        # No grace push — finish impulse in PUSH, then unload.
+                        leg_is_stance[leg] = False
+                        contact_snap.stance[leg] = False
+                        contact_snap.force_scale[leg] = 0.0
+                    else:
+                        # On-ground jump: full stance.
+                        leg_is_stance[leg] = True
+                        contact_snap.stance[leg] = True
+                        contact_snap.force_scale[leg] = 1.0
+            elif spot_now:
                 # Stomp FSM owns contact: plant/twist = 4-stance; catch = diagonal.
                 stepper = getattr(active_gait, "_spot", None)
                 for leg in _LEGS:
@@ -600,12 +736,22 @@ class CommandExecutor:
             foot_z, foot_vz, foot_pos, foot_vel = self._foot_kinematics(q_pin, v_pin)
 
         target_z = active_gait.body_height if active_gait else 0.24
+        if active_gait is not None and hasattr(active_gait, "get_target_z"):
+            try:
+                target_z = float(active_gait.get_target_z(t_rel))
+            except TypeError:
+                target_z = float(active_gait.get_target_z())
         target_roll = 0.0
         target_pitch = 0.0
 
         vx_cmd = 0.0
         vy_cmd = 0.0
         wz_cmd = 0.0
+        vz_cmd = 0.0
+        jump_now = bool(
+            active_gait is not None
+            and getattr(active_gait, "family", None) == "jump"
+        )
         if active_gait:
             if hasattr(active_gait, "vel_cmd"):
                 vx_cmd = active_gait.vel_cmd[0]
@@ -618,6 +764,23 @@ class CommandExecutor:
                     + getattr(active_gait, "amp_rear", active_gait.amp_front)
                 ) / 2.0
                 vx_cmd = (avg_amp * 2.0) / active_gait.period
+            if jump_now and hasattr(active_gait, "desired_vz"):
+                vz_cmd = float(active_gait.desired_vz(t_rel))
+            if jump_now:
+                # Prefer MuJoCo/IMU truth over estimator — est under-reads liftoff vz.
+                vz_truth = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[2])
+                vz_note = (
+                    vz_truth
+                    if abs(vz_truth) >= abs(float(v_pin[2]))
+                    else float(v_pin[2])
+                )
+                if hasattr(active_gait, "note_base_vz"):
+                    active_gait.note_base_vz(vz_note)
+                if hasattr(active_gait, "note_base_z"):
+                    active_gait.note_base_z(float(current_base_z))
+                vx_cmd = 0.0
+                vy_cmd = 0.0
+                wz_cmd = 0.0
 
         cfg = self.config
         # Lateral velocity: light EMA then damp (cuts estimator noise, keeps authority).
@@ -642,12 +805,15 @@ class CommandExecutor:
         # Push when slow; zero ax when est already at/above cmd (no fake brake).
         ax_gain = 3.5 if vx_err * vx_cmd > 1e-6 else 0.0
         spot = bool(getattr(active_gait, "spot_turn_active", False))
+        # Prefer larger |v| between estimator and IMU/truth — estimator
+        # under-reads soft-contact scrub (~0.02 vs truth ~0.11 while standing).
+        vx_raw = float(getattr(state, "vel_xyz", (vx_meas, 0.0, 0.0))[0])
+        vy_raw = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[1])
+        vx_brake = vx_raw if abs(vx_raw) > abs(vx_meas) else vx_meas
+        vy_brake = vy_raw if abs(vy_raw) > abs(float(vel_xyz[1])) else float(vel_xyz[1])
+        hold_still = (not spot) and abs(float(vx_cmd)) <= 0.05
         if spot:
             # Kill forward creep hard; estimator under-reads scrubbing vx.
-            vx_raw = float(getattr(state, "vel_xyz", (vx_meas, 0.0, 0.0))[0])
-            vy_raw = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[1])
-            vx_brake = vx_raw if abs(vx_raw) > abs(vx_meas) else vx_meas
-            vy_brake = vy_raw if abs(vy_raw) > abs(float(vel_xyz[1])) else float(vel_xyz[1])
             # Active back-bias cancels residual forward scrub.
             base_acc_des[0] = -36.0 * (vx_brake + 0.03) - 6.0 * np.sign(vx_brake + 0.015)
             base_acc_des[1] = -18.0 * vy_brake - 4.0 * np.sign(vy_brake)
@@ -658,17 +824,101 @@ class CommandExecutor:
                 base_acc_des[1] += 40.0 * float(sy)
             vx_cmd = -0.03
             vy_cmd = 0.0
+        elif hold_still:
+            # Stand / jump hold / zero-cmd: lateral had damp, longitudinal did not
+            # → constant forward scrape on soft soles. Same authority as Spot.
+            # Launch phases: don't fight vertical impulse with hard XY brake.
+            jump_launch = jump_now and getattr(
+                getattr(active_gait, "phase", None), "value", ""
+            ) in ("crouch", "push", "flight")
+            if jump_launch:
+                base_acc_des[0] = -8.0 * vx_brake
+                base_acc_des[1] = -float(cfg.lateral_vel_damp) * vy_for_damp
+            else:
+                base_acc_des[0] = (
+                    -36.0 * (vx_brake + 0.02) - 6.0 * np.sign(vx_brake + 0.01)
+                )
+                base_acc_des[1] = (
+                    -float(cfg.lateral_vel_damp) * vy_for_damp
+                    - 3.0 * np.sign(vy_brake)
+                )
         else:
             base_acc_des[0] = ax_gain * vx_err
             base_acc_des[1] = -float(cfg.lateral_vel_damp) * vy_for_damp
-        base_acc_des[2] = cfg.kp_base_z * (target_z - current_base_z) - cfg.kd_base_z * v_pin[2]
+        # Jump: track z_ref + desired_vz; Soft/Walk keep original damping on vz.
+        if jump_now:
+            # During jump, position tracking can fight velocity tracking if the robot
+            # didn't crouch deep enough. We prioritize velocity tracking.
+            z_err = target_z - current_base_z
+            phase_name = getattr(
+                getattr(active_gait, "phase", None), "value", ""
+            )
+            if phase_name == "push":
+                z_err = max(0.0, z_err)  # Never push down during PUSH
+                vz_truth = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[2])
+                vz_use = (
+                    vz_truth if abs(vz_truth) > abs(float(v_pin[2])) else float(v_pin[2])
+                )
+                # Strong upward vz track; never brake a rising hop (cmd lag → dig).
+                vz_term = -2.0 * cfg.kd_base_z * (vz_use - vz_cmd)
+                vz_term = max(0.0, float(vz_term))
+                base_acc_des[2] = 0.20 * cfg.kp_base_z * z_err + vz_term
+            elif phase_name in ("land", "recover"):
+                # Soft absorb: never bounce by over-braking a downward vz.
+                stand_h = float(getattr(active_gait, "stand_height", 0.24))
+                z_to_stand = stand_h - current_base_z
+                vz = float(v_pin[2])
+                if z_to_stand > 0.0:
+                    # Below stand — rise gently; don't fight the fall hard.
+                    base_acc_des[2] = (
+                        0.20 * cfg.kp_base_z * z_to_stand
+                        - 0.40 * cfg.kd_base_z * vz
+                    )
+                else:
+                    # Above stand — pull down / brake upward bounce.
+                    base_acc_des[2] = (
+                        0.90 * cfg.kp_base_z * z_to_stand
+                        - 2.5 * cfg.kd_base_z * max(0.0, vz)
+                    )
+            else:
+                base_acc_des[2] = (
+                    cfg.kp_base_z * z_err
+                    - cfg.kd_base_z * (v_pin[2] - vz_cmd)
+                )
+            # Kill nose-up so front doesn't peel/plant while rear clears.
+            # Slight nose-down bias during push loads the rear feet.
+            phase_name = getattr(
+                getattr(active_gait, "phase", None), "value", ""
+            )
+            if phase_name == "push":
+                pitch_des = -0.02
+                pitch_kp = 5.5
+                pitch_kd = 3.0
+            elif phase_name == "flight":
+                # Nose-down bias unloads front so all four can clear together.
+                pitch_des = -0.04
+                pitch_kp = 6.5
+                pitch_kd = 3.5
+            else:
+                pitch_des = 0.0
+                pitch_kp = 3.0
+                pitch_kd = 2.0
+            base_acc_des[4] = (
+                pitch_kp * cfg.kp_base_pitch * (pitch_des - state.pitch)
+                - pitch_kd * cfg.kd_base_pitch * state.gyro_pitch
+            )
+        else:
+            base_acc_des[2] = (
+                cfg.kp_base_z * (target_z - current_base_z)
+                - cfg.kd_base_z * v_pin[2]
+            )
+            base_acc_des[4] = (
+                cfg.kp_base_pitch * (target_pitch - state.pitch)
+                - cfg.kd_base_pitch * state.gyro_pitch
+            )
         base_acc_des[3] = (
             cfg.kp_base_roll * (target_roll - state.roll)
             - cfg.kd_base_roll * state.gyro_roll
-        )
-        base_acc_des[4] = (
-            cfg.kp_base_pitch * (target_pitch - state.pitch)
-            - cfg.kd_base_pitch * state.gyro_pitch
         )
         # Spot: mild yaw_des track + wz — feet scrub does most of the turn.
         if spot and abs(wz_cmd) > 0.05:
@@ -688,6 +938,12 @@ class CommandExecutor:
             else:
                 base_acc_des[5] = -4.0 * state.gyro_yaw
 
+        # Jump flight swing boost must be set BEFORE _swing_acc_des.
+        self._jump_flight_swing_boost = bool(
+            jump_now
+            and getattr(getattr(active_gait, "phase", None), "value", "") == "flight"
+        )
+
         swing_acc, foot_pos_des = self._swing_acc_des(
             state,
             targets,
@@ -698,6 +954,35 @@ class CommandExecutor:
             foot_pos,
             foot_vel,
         )
+        # Standstill: kill foot world-XY velocity. Stance a=0 would keep a
+        # constant scrub once soft contact starts sliding.
+        # Use scrub-aware base rates (estimator under-reads ~5× while standing).
+        stance_acc = {leg: np.zeros(3) for leg in _LEGS}
+        jump_phase = (
+            getattr(getattr(active_gait, "phase", None), "value", "")
+            if jump_now else ""
+        )
+        # During crouch/push/flight: don't burn friction cone / QP on XY scrub brake.
+        scrub_brake = hold_still and jump_phase not in ("crouch", "push", "flight")
+        if scrub_brake:
+            v_pin[0] = float(vx_brake)
+            v_pin[1] = float(vy_brake)
+            _, _, _, foot_vel = self._foot_kinematics(q_pin, v_pin)
+            kd_foot = 40.0
+            for leg in _LEGS:
+                if not leg_is_stance.get(leg, True):
+                    continue
+                v_f = np.asarray(foot_vel[leg], dtype=float).reshape(3)
+                # Fallback to base scrub if FK still under-reads.
+                vx_f = float(v_f[0]) if abs(float(v_f[0])) > 0.02 else float(vx_brake)
+                vy_f = float(v_f[1]) if abs(float(v_f[1])) > 0.02 else float(vy_brake)
+                stance_acc[leg] = np.array(
+                    [-kd_foot * vx_f, -kd_foot * vy_f, 0.0]
+                )
+        elif hold_still:
+            # Still feed truth rates into dynamics during launch.
+            v_pin[0] = float(vx_brake)
+            v_pin[1] = float(vy_brake)
 
         f_c_des = None
         if self._force_planner is not None:
@@ -709,9 +994,19 @@ class CommandExecutor:
             x0[6] = state.gyro_roll
             x0[7] = state.gyro_pitch
             x0[8] = state.gyro_yaw
-            x0[9] = 0.0 if spot else vx_for_track
-            x0[10] = 0.0 if spot else vel_xyz[1]
-            x0[11] = vel_xyz[2]
+            # Spot zeros XY rates. Hold-still feeds scrub-aware vx so MPC brakes.
+            if spot:
+                x0[9] = 0.0
+                x0[10] = 0.0
+            elif hold_still:
+                x0[9] = float(vx_brake)
+                x0[10] = float(
+                    vy_brake if abs(vy_brake) > abs(float(vel_xyz[1])) else vel_xyz[1]
+                )
+            else:
+                x0[9] = vx_for_track
+                x0[10] = vel_xyz[1]
+            x0[11] = float(vz_cmd) if jump_now else vel_xyz[2]
             x0[12] = -9.81
 
             H = self._force_planner.mpc.cfg.horizon
@@ -730,6 +1025,14 @@ class CommandExecutor:
                 sx, sy = active_gait.get_spot_com_shift(t_rel)
                 x_shift = float(sx)
                 y_shift = float(sy)
+            elif (
+                not spot
+                and getattr(active_gait, "family", None) == "walk"
+                and hasattr(active_gait, "get_com_y_shift")
+            ):
+                # Four-beat Walk: phase-locked CoM sway (∞-like lateral), not
+                # SoftTrot diagonal kick.
+                y_shift = float(active_gait.get_com_y_shift(t_rel))
             else:
                 y_shift = 0.0 if spot else float(cfg.com_y_shift_m) * 0.5 * diag
 
@@ -739,6 +1042,11 @@ class CommandExecutor:
                 float(getattr(getattr(active_gait, "_spot", None), "yaw_des", state.yaw))
                 if spot else state.yaw
             )
+            walk_com = (
+                not spot
+                and getattr(active_gait, "family", None) == "walk"
+                and hasattr(active_gait, "get_com_y_shift")
+            )
             for k in range(H):
                 dt_k = k * dt_mpc
                 x_ref[k * 13 + 0] = target_roll
@@ -746,10 +1054,15 @@ class CommandExecutor:
                 x_ref[k * 13 + 2] = yaw0 + wz_ref * dt_k
                 x_ref[k * 13 + 8] = wz_ref
                 x_ref[k * 13 + 3] = vx_cmd * dt_k + x_shift
-                x_ref[k * 13 + 4] = vy_cmd * dt_k + y_shift
-                x_ref[k * 13 + 5] = target_z
+                y_k = (
+                    float(active_gait.get_com_y_shift(t_rel + dt_k))
+                    if walk_com else y_shift
+                )
+                x_ref[k * 13 + 4] = vy_cmd * dt_k + y_k
+                x_ref[k * 13 + 5] = (current_base_z if jump_now else target_z) + (vz_cmd * dt_k if jump_now else 0.0)
                 x_ref[k * 13 + 9] = vx_cmd
                 x_ref[k * 13 + 10] = vy_cmd
+                x_ref[k * 13 + 11] = float(vz_cmd) if jump_now else 0.0
                 x_ref[k * 13 + 12] = -9.81
 
             r_feet = np.zeros((3, 4))
@@ -779,6 +1092,38 @@ class CommandExecutor:
                             contact_h[k * 4 + li] = float(
                                 stepper.predict_force_scale(leg, t_k, per)
                             )
+            elif jump_now:
+                # Predict jump force scale across horizon.
+                in_flight = bool(
+                    getattr(active_gait, "in_flight", lambda: False)()
+                )
+                phase_u = 0.0
+                if hasattr(active_gait, "_phase_u"):
+                    try:
+                        phase_u = float(active_gait._phase_u(t_rel))
+                    except Exception:
+                        phase_u = 0.0
+                still_any = bool(
+                    contact_snap is not None
+                    and any(bool(contact_snap.measured.get(leg, False)) for leg in _LEGS)
+                )
+                vz_meas = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[2])
+                # Early flight + slow + still planted: tiny horizon hold only.
+                hold_push = (
+                    in_flight and still_any and phase_u < 0.10 and vz_meas < 0.40
+                )
+                contact_h = np.zeros(4 * H, dtype=float)
+                for k in range(H):
+                    t_k = t_rel + k * dt_mpc
+                    jfs = float(
+                        active_gait.predict_jump_force_scale(t_k)
+                        if hasattr(active_gait, "predict_jump_force_scale")
+                        else (0.0 if in_flight else 1.0)
+                    )
+                    if hold_push:
+                        jfs = max(jfs, 0.7)
+                    for li in range(4):
+                        contact_h[k * 4 + li] = jfs
             force_scale = (
                 contact_snap.force_scale
                 if contact_snap is not None
@@ -787,6 +1132,8 @@ class CommandExecutor:
             # Spot: open-dog yaw is the task — default Q barely tracks yaw (4)
             # vs roll (90), so ayaw alone scrubs. Boost yaw/wz, pin XY.
             q_prev = None
+            lpf_prev = None
+            df_prev = None
             if spot:
                 q_prev = np.array(self._force_planner.mpc.cfg.weights_Q, copy=True)
                 q = np.array(q_prev, copy=True)
@@ -797,6 +1144,34 @@ class CommandExecutor:
                 q[9] = 60.0   # vx → 0
                 q[10] = 60.0  # vy → 0
                 self._force_planner.mpc.cfg.weights_Q = q
+            elif hold_still:
+                # Stand / zero-cmd: pin vx so soft soles don't scrape forward.
+                q_prev = np.array(self._force_planner.mpc.cfg.weights_Q, copy=True)
+                q = np.array(q_prev, copy=True)
+                q[3] = max(float(q[3]), 30.0)   # x hold
+                q[9] = max(float(q[9]), 55.0)   # vx → 0
+                q[10] = max(float(q[10]), 40.0)  # vy → 0
+                self._force_planner.mpc.cfg.weights_Q = q
+            if jump_now:
+                # Fast force ramp — default 700N/s is too slow for a short push.
+                lpf_prev = float(self._force_planner.force_lpf_alpha)
+                df_prev = float(self._force_planner.max_df_dt)
+                self._force_planner.force_lpf_alpha = max(lpf_prev, 0.35)
+                self._force_planner.max_df_dt = max(df_prev, 2800.0)
+                if q_prev is None:
+                    q_prev = np.array(self._force_planner.mpc.cfg.weights_Q, copy=True)
+                q = np.array(self._force_planner.mpc.cfg.weights_Q, copy=True)
+                q[5] = max(float(q[5]), 80.0)   # z
+                q[11] = max(float(q[11]), 50.0)  # vz
+                phase_q = getattr(
+                    getattr(active_gait, "phase", None), "value", ""
+                )
+                if phase_q == "push":
+                    q[11] = max(float(q[11]), 80.0)  # chase push_vz
+                    q[9] = min(float(q[9]), 15.0)    # don't brake launch
+                else:
+                    q[9] = max(float(q[9]), 55.0)    # kill forward creep
+                self._force_planner.mpc.cfg.weights_Q = q
             try:
                 f_c_des = self._force_planner.plan(
                     x0=x0,
@@ -806,9 +1181,58 @@ class CommandExecutor:
                     force_scale=force_scale,
                     dt=0.005,  # fixed control period; t_rel can reset at gait start
                 )
+                # Jump PUSH: amplify vertical impulse; soft-land scales Fz only.
+                if jump_now:
+                    phase_name = getattr(
+                        getattr(active_gait, "phase", None), "value", ""
+                    )
+                    jfs = float(
+                        active_gait.jump_force_scale_at(t_rel)
+                        if hasattr(active_gait, "jump_force_scale_at")
+                        else 1.0
+                    )
+                    if phase_name in ("land", "recover") and jfs < 0.99:
+                        for li in range(4):
+                            f_c_des[li * 3 + 2] *= max(0.15, jfs)
+                    if phase_name == "push":
+                        # ~2× body weight; keep front/rear balanced (rear bias → 二弹).
+                        f_cap = 60.0
+                        for li, leg in enumerate(_LEGS):
+                            s = 1.06 if leg in ("rl", "rr") else 1.02
+                            fz = max(float(f_c_des[li * 3 + 2]) * s * 1.80, 32.0 * s)
+                            f_c_des[li * 3 + 2] = min(f_cap * s, fz)
+                        zmin = min(float(foot_z.get(leg, 0.0)) for leg in _LEGS)
+                        if zmin < -0.030:
+                            dig = min(1.0, (-0.030 - zmin) / 0.020)
+                            fz_s = max(0.80, 1.0 - 0.20 * dig)
+                            for li in range(4):
+                                f_c_des[li * 3 + 2] *= fz_s
+                    elif phase_name == "crouch":
+                        for li, leg in enumerate(_LEGS):
+                            s = 1.05 if leg in ("rl", "rr") else 0.97
+                            f_c_des[li * 3 + 2] *= s
+                # Hold-still XY brake — skip during launch (needs friction for Fz).
+                if scrub_brake:
+                    n_st = sum(
+                        1 for leg in _LEGS if leg_is_stance.get(leg, True)
+                    ) or 4
+                    fx_tot = -80.0 * float(vx_brake) - 10.0 * np.sign(
+                        float(vx_brake) + 1e-6
+                    )
+                    fy_tot = -40.0 * float(vy_brake)
+                    share = 1.0 / float(n_st)
+                    for li, leg in enumerate(_LEGS):
+                        if not leg_is_stance.get(leg, True):
+                            continue
+                        f_c_des[li * 3 + 0] += fx_tot * share
+                        f_c_des[li * 3 + 1] += fy_tot * share
             finally:
                 if q_prev is not None:
                     self._force_planner.mpc.cfg.weights_Q = q_prev
+                if lpf_prev is not None:
+                    self._force_planner.force_lpf_alpha = lpf_prev
+                if df_prev is not None:
+                    self._force_planner.max_df_dt = df_prev
         else:
             force_scale = (
                 contact_snap.force_scale
@@ -820,18 +1244,66 @@ class CommandExecutor:
         wbc_w_prev = None
         wbc_st_prev = None
         wbc_sw_prev = None
-        if spot and self._wbc_ctrl is not None:
+        if (spot or jump_now or hold_still) and self._wbc_ctrl is not None:
             wbc_w_prev = np.array(self._wbc_ctrl.config.weight_base_acc, copy=True)
             wbc_st_prev = float(self._wbc_ctrl.config.weight_stance_acc)
             wbc_sw_prev = float(self._wbc_ctrl.config.weight_swing_acc)
             w = np.array(wbc_w_prev, copy=True)
-            w[0, 0] = 45.0   # ax — kill creep
-            w[1, 1] = 45.0   # ay
-            w[3, 3] = max(float(w[3, 3]), 70.0)  # keep roll while yawing
-            w[5, 5] = 120.0  # ayaw assist (CoM+3-foot do the plant)
+            wbc_ft_prev = None
+            if spot:
+                w[0, 0] = 45.0   # ax — kill creep
+                w[1, 1] = 45.0   # ay
+                w[3, 3] = max(float(w[3, 3]), 70.0)  # keep roll while yawing
+                w[5, 5] = 120.0  # ayaw assist (CoM+3-foot do the plant)
+                self._wbc_ctrl.config.weight_stance_acc = 8.0
+                self._wbc_ctrl.config.weight_swing_acc = max(wbc_sw_prev, 18.0)
+            elif hold_still:
+                w[0, 0] = max(float(w[0, 0]), 55.0)  # ax — standstill brake
+                w[1, 1] = max(float(w[1, 1]), 40.0)
+                self._wbc_ctrl.config.weight_stance_acc = max(wbc_st_prev, 40.0)
+                wbc_ft_prev = float(self._wbc_ctrl.config.weight_force_tracking)
+                self._wbc_ctrl.config.weight_force_tracking = max(wbc_ft_prev, 12.0)
+            if jump_now:
+                phase_name = getattr(
+                    getattr(active_gait, "phase", None), "value", ""
+                )
+                if phase_name == "push":
+                    w[0, 0] = 8.0    # don't steal friction from Fz
+                    w[1, 1] = 8.0
+                    w[2, 2] = 90.0   # vertical launch
+                else:
+                    w[0, 0] = max(float(w[0, 0]), 55.0)  # hold XY during hop
+                    w[2, 2] = 55.0  # Strongly track Z acceleration for jump
+                w[4, 4] = max(float(w[4, 4]), 90.0)  # hold pitch — stop nose-up peel
+                wbc_fmax_prev = float(self._wbc_ctrl.config.f_max)
+                if phase_name == "push":
+                    self._wbc_ctrl.config.f_max = max(wbc_fmax_prev, 140.0)
+                else:
+                    wbc_fmax_prev = None
+                if phase_name == "flight":
+                    self._wbc_ctrl.config.weight_stance_acc = 1.0
+                    self._wbc_ctrl.config.weight_swing_acc = max(wbc_sw_prev, 28.0)
+                elif phase_name == "push":
+                    # Softer stance lock so feet can leave while Fz is high.
+                    self._wbc_ctrl.config.weight_stance_acc = min(
+                        max(wbc_st_prev, 12.0), 18.0
+                    )
+                else:
+                    # Keep stance foot-scrub brake strong on ground.
+                    self._wbc_ctrl.config.weight_stance_acc = max(wbc_st_prev, 35.0)
+                if wbc_ft_prev is None:
+                    wbc_ft_prev = float(self._wbc_ctrl.config.weight_force_tracking)
+                self._wbc_ctrl.config.weight_force_tracking = max(
+                    wbc_ft_prev, 28.0 if phase_name == "push" else 20.0
+                )
+            else:
+                wbc_fmax_prev = None
+                if not hold_still:
+                    wbc_ft_prev = None
             self._wbc_ctrl.config.weight_base_acc = w
-            self._wbc_ctrl.config.weight_stance_acc = 8.0
-            self._wbc_ctrl.config.weight_swing_acc = max(wbc_sw_prev, 18.0)
+        else:
+            wbc_ft_prev = None
+            wbc_fmax_prev = None
         try:
             tau_opt = self._wbc_ctrl.compute_tau(
                 q_pin=q_pin,
@@ -841,6 +1313,7 @@ class CommandExecutor:
                 f_c_des=f_c_des,
                 swing_acc_des=swing_acc,
                 force_scale=force_scale,
+                stance_acc_des=stance_acc,
             )
         finally:
             if wbc_w_prev is not None:
@@ -848,9 +1321,25 @@ class CommandExecutor:
                 self._wbc_ctrl.config.weight_stance_acc = wbc_st_prev
             if wbc_sw_prev is not None:
                 self._wbc_ctrl.config.weight_swing_acc = wbc_sw_prev
+            if wbc_ft_prev is not None:
+                self._wbc_ctrl.config.weight_force_tracking = wbc_ft_prev
+            if wbc_fmax_prev is not None:
+                self._wbc_ctrl.config.f_max = wbc_fmax_prev
 
         # Light gravity assist blended under WBC torque (swing + stance)
         grav = gravity_trq(targets, 0.20)
+        # Jump PUSH: amplify τ_ff so Jc^T F is not drowned by residual PD.
+        jump_tau_scale = 1.0
+        if jump_now:
+            phase_name = getattr(
+                getattr(active_gait, "phase", None), "value", ""
+            )
+            if phase_name == "push":
+                jump_tau_scale = 3.0
+            elif phase_name == "crouch":
+                jump_tau_scale = 1.5
+            elif phase_name in ("land", "recover"):
+                jump_tau_scale = 0.7  # don't smash back up to stand
         out_trq = {}
         for i, jname_joint in enumerate(self._wbc_ctrl.actuated_joint_names):
             jname = jname_joint.replace("_joint", "")
@@ -860,7 +1349,7 @@ class CommandExecutor:
             if mid not in targets:
                 continue
             # Always use WBC tau (includes swing tracking); mild grav blend
-            out_trq[mid] = float(tau_opt[i]) + grav.get(mid, 0.0)
+            out_trq[mid] = float(tau_opt[i]) * jump_tau_scale + grav.get(mid, 0.0)
 
         foot_pos_flat = np.zeros(12)
         foot_des_flat = np.zeros(12)
@@ -1074,16 +1563,50 @@ class CommandExecutor:
         kp_phase: dict[int, float] = {}
         # Spot: follow unitree swing duty (SpotYawStepper), not cruise stagger.
         spot = bool(getattr(active_gait, "spot_turn_active", False))
+        walk = getattr(active_gait, "family", None) == "walk"
+        jump = getattr(active_gait, "family", None) == "jump"
         stepper = getattr(active_gait, "_spot", None) if spot else None
         period = active_gait.period
         stance_ratio = active_gait.stance_ratio
         offsets = active_gait._PHASE_OFFSET
+        # Walk: softer plant only in a short late-swing window.
+        # Jump LAND: soft TD window for impedance fade-in.
+        td_scale = self.config.td_kp_scale
+        swing_scale = self.config.swing_kp_scale
+        if jump:
+            td_window = min(0.18, max(0.12, float(self.config.td_window)))
+        elif walk:
+            td_window = min(0.10, float(self.config.td_window))
+        else:
+            td_window = self.config.td_window
         for mid, leg in _LEG_MOTOR_IDS:
-            if stepper is not None and hasattr(stepper, "in_swing"):
+            if jump:
+                # Stiff crouch/push; soft flight/land (avoid yanking body down).
+                phase_name = getattr(
+                    getattr(active_gait, "phase", None), "value", ""
+                )
+                if phase_name == "land":
+                    kp_phase[mid] = 1.0
+                elif phase_name == "recover":
+                    kp_phase[mid] = 0.70
+                elif phase_name == "flight":
+                    u = 0.0
+                    if hasattr(active_gait, "_phase_u"):
+                        try:
+                            u = float(active_gait._phase_u(t_rel))
+                        except Exception:
+                            u = 0.0
+                    kp_phase[mid] = 1.60 if u < 0.25 else 0.50
+                elif phase_name == "push":
+                    kp_phase[mid] = 0.95
+                elif phase_name == "crouch":
+                    kp_phase[mid] = 1.5
+                else:
+                    kp_phase[mid] = 1.0
+            elif stepper is not None and hasattr(stepper, "in_swing"):
                 in_sw = bool(stepper.in_swing(leg))
-                # Soft swing KP / firm stance KP — same numbers as cruise scales.
                 kp_phase[mid] = (
-                    float(self.config.swing_kp_scale) if in_sw
+                    float(swing_scale) if in_sw
                     else 1.0
                 )
             else:
@@ -1091,9 +1614,9 @@ class CommandExecutor:
                 kp_phase[mid] = kp_phase_scale(
                     phase,
                     stance_ratio,
-                    self.config.td_kp_scale,
-                    self.config.swing_kp_scale,
-                    self.config.td_window,
+                    td_scale,
+                    swing_scale,
+                    td_window,
                 )
         return kp_phase
 

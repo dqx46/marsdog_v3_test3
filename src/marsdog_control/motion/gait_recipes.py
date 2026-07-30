@@ -90,9 +90,15 @@ class ControllerSet:
     pace_fwd: "GaitController"
     pace_bwd: "GaitController"
     nat_fwd: "GaitController"
+    walk_fwd: "GaitController"
+    jump_fwd: "GaitController"
 
     def as_tuple(self):
-        return self.stand, self.fwd, self.bwd, self.pace_fwd, self.pace_bwd, self.nat_fwd
+        return (
+            self.stand, self.fwd, self.bwd,
+            self.pace_fwd, self.pace_bwd, self.nat_fwd, self.walk_fwd,
+            self.jump_fwd,
+        )
 
 
 def apply_turn_params(controller, cfg: GaitStackConfig) -> None:
@@ -120,19 +126,22 @@ def build_controller_set(
     front_x0: float,
     rear_x0: float,
     natural_params: Optional[dict] = None,
+    walk_params: Optional[dict] = None,
+    jump_params: Optional[dict] = None,
     natural_spine_yaw_deg: Optional[float] = None,
     natural_spine_roll_deg: Optional[float] = None,
     apply_turn: bool = True,
     pace_use_stand_offsets: bool = True,
 ) -> ControllerSet:
-    """构造 stand/trot/pace/natural 控制器组。
+    """构造 stand/trot/pace/natural/walk/jump 控制器组。
 
     首选传入 :class:`GaitStackConfig`；仍接受 CLI Namespace（内部一次性快照）。
     这里只负责控制器对象和共享参数，不处理仿真/实机 IO、effort override、
     IMU、键盘/手柄等运行时逻辑。
     """
     from marsdog_control.motion.gait_controller import (
-        StablePace, StableTrot, NaturalTrot, NaturalSoftTrot)
+        StablePace, StableTrot, NaturalTrot, NaturalSoftTrot, NaturalWalk,
+        JumpController)
 
     cfg = _as_gait_stack_config(args_or_cfg)
     stand_cfg = StandingPoseConfig.from_config(cfg, front_x0=front_x0, rear_x0=rear_x0)
@@ -260,6 +269,7 @@ def build_controller_set(
                 if cfg.front_stand_foot_pitch_deg is not None
                 else np.get("front_stand_foot_pitch_deg")
             ),
+            stance_ratio=np.get("stance", nat_common["stance_ratio"]),
         )
 
     natural_cls = NaturalSoftTrot if cfg.natural_soft_trot else NaturalTrot
@@ -319,13 +329,85 @@ def build_controller_set(
         **nat_common,
     )
 
-    for controller in (fwd, bwd, pace_fwd, pace_bwd, nat_fwd):
+    # ── NaturalWalk: 独立配方，不读 SoftTrot 已灌进 cfg 的数字 ──
+    wp = dict(walk_params) if walk_params else dict(NATURAL_WALK_REAL)
+    walk_common = dict(common)
+    walk_common.update(
+        body_height=wp.get("height", common["body_height"]),
+        stance_ratio=wp.get("stance", 0.74),
+        lateral_sway=wp.get("lateral_sway", 0.008),
+        anti_roll=wp.get("anti_roll", 0.0),
+        trot_roll_ff_neg_deg=wp.get("trot_roll_ff_neg_deg", 0.0),
+        trot_roll_ff_pos_deg=wp.get("trot_roll_ff_pos_deg", 0.0),
+        anti_roll_asym_neg=wp.get("anti_roll_asym_neg", 1.0),
+        anti_roll_asym_pos=wp.get("anti_roll_asym_pos", 1.0),
+        front_tarsus_push=0.0,
+        front_thrust_gain=1.0,
+        front_thrust_swing_gain=1.0,
+        front_foot_swing_track=0.0,
+        front_stand_foot_pitch_deg=wp.get(
+            "front_stand_foot_pitch_deg",
+            common.get("front_stand_foot_pitch_deg"),
+        ),
+    )
+    walk_fwd = NaturalWalk(
+        amp_front=float(wp.get("amp_front", 0.032)),
+        amp_rear=float(wp.get("amp_rear", 0.036)),
+        step_height=float(wp.get("step_h", 0.038)),
+        step_height_front=float(wp.get("step_h_front", wp.get("step_h", 0.038))),
+        period=float(wp.get("period", 1.00)),
+        hip_abduction=fwd_hip_abd,
+        spine_yaw_deg=float(wp.get("spine_yaw_deg", 5.0)),
+        spine_roll_deg=float(wp.get("spine_roll_deg", 2.4)),
+        spine_phase_deg=float(wp.get("spine_phase_deg", 0.0)),
+        thigh_swing_front_deg=float(wp.get("thigh_swing_front_deg", 0.0)),
+        thigh_swing_rear_deg=float(wp.get("thigh_swing_rear_deg", 12.0)),
+        retract_front=float(wp.get("retract_front", 0.032)),
+        retract_rear=float(wp.get("retract_rear", 0.036)),
+        tarsus_swing_deg=float(wp.get("tarsus_swing_deg", 0.0)),
+        touchdown_compress=float(wp.get("touchdown_compress", 0.006)),
+        anti_roll_soft_scale=float(wp.get("anti_roll_soft_scale", 0.0)),
+        toeoff_lift=float(wp.get("toeoff_lift", 0.008)),
+        retract_peak=float(wp.get("retract_peak", 0.22)),
+        lift_peak=float(wp.get("lift_peak", 0.26)),
+        rear_clearance_m=float(wp.get("rear_clearance_m", 0.020)),
+        com_sway_m=float(wp.get("com_sway_m", wp.get("lateral_sway", 0.010) * 1.4)),
+        **walk_common,
+    )
+
+    # ── Jump: 独立配方，绝不读 Soft/Walk 数字进 Jump，也不把 Jump 灌进 Soft args ──
+    jp = dict(jump_params) if jump_params else dict(JUMP_REAL)
+    jump_fwd = JumpController(
+        body_height=float(jp.get("height", common["body_height"])),
+        x_offset_front=common["x_offset_front"],
+        x_offset_rear=common["x_offset_rear"],
+        hip_abduction=fwd_hip_abd,
+        front_stand_tarsus_deg=common.get("front_stand_tarsus_deg", 0.0),
+        front_stand_foot_pitch_deg=jp.get(
+            "front_stand_foot_pitch_deg",
+            common.get("front_stand_foot_pitch_deg"),
+        ),
+        crouch_depth=float(jp.get("crouch_depth", 0.045)),
+        crouch_s=float(jp.get("crouch_s", 0.28)),
+        push_s=float(jp.get("push_s", 0.12)),
+        flight_s=float(jp.get("flight_s", 0.18)),
+        land_s=float(jp.get("land_s", 0.22)),
+        recover_s=float(jp.get("recover_s", 0.25)),
+        flight_clearance=float(jp.get("flight_clearance", 0.025)),
+        land_compress=float(jp.get("land_compress", 0.012)),
+        push_vz=float(jp.get("push_vz", 0.55)),
+        push_extend=float(jp.get("push_extend", 0.020)),
+    )
+
+    for controller in (fwd, bwd, pace_fwd, pace_bwd, nat_fwd, walk_fwd, jump_fwd):
         _set_waist_offsets(controller, cfg)
     if apply_turn:
         for controller in (fwd, bwd, nat_fwd):
             apply_turn_params(controller, cfg)
 
-    return ControllerSet(stand, fwd, bwd, pace_fwd, pace_bwd, nat_fwd)
+    return ControllerSet(
+        stand, fwd, bwd, pace_fwd, pace_bwd, nat_fwd, walk_fwd, jump_fwd,
+    )
 
 
 SIM_PREVIEW_BASE = {
@@ -585,6 +667,118 @@ NATURAL_SOFT_TROT_WBC = {
     "lateral_vel_damp": 14.0,
     "swing_foot_kp": 70.0,
     "com_y_shift_m": 0.0,
+}
+
+# 真狗四拍慢走 — 与 SoftTrot 完全解耦；只改本 dict，勿动 NATURAL_SOFT_TROT_*。
+# 抬腿序 LH→LF→RH→RF；可读走速（非爬行）+ 事件型侧移 + 自有足端曲线。
+NATURAL_WALK_REAL = {
+    "height": 0.24,
+    "period": 1.05,
+    "nat_period": 1.05,
+    "stance": 0.75,
+    "amp_front": 0.050,
+    "amp_rear": 0.058,
+    "nat_amp_front": 0.050,
+    "nat_amp_rear": 0.058,
+    "step_h": 0.034,
+    "nat_step_h": 0.034,
+    "step_h_front": 0.032,
+    "fwd_front_lift": 0.032,
+    "touchdown_compress": 0.006,
+    "anti_roll_soft_scale": 0.0,
+    "toeoff_lift": 0.007,
+    "retract_peak": 0.22,
+    "lift_peak": 0.26,
+    "thigh_swing_front_deg": 0.0,
+    "thigh_swing_rear_deg": 12.0,
+    "retract_front": 0.030,
+    "retract_rear": 0.034,
+    "tarsus_swing_deg": 0.0,
+    "swing_clearance_per_rad": 0.35,
+    "front_thrust_gain": 1.0,
+    "front_thrust_swing_gain": 1.0,
+    "front_tarsus_push": 0.0,
+    "front_foot_track_deg": -78.0,
+    "front_foot_stance_push_deg": 8.0,
+    "front_foot_swing_track": 0.0,
+    "front_stand_foot_pitch_deg": -90.0,
+    "spine_yaw_deg": 5.5,
+    "spine_roll_deg": 2.5,
+    "spine_phase_deg": 0.0,
+    "lateral_sway": 0.010,
+    "com_sway_m": 0.024,
+    "anti_roll": 0.0,
+    "anti_roll_asym_neg": 1.0,
+    "anti_roll_asym_pos": 1.0,
+    "trot_roll_ff_neg_deg": 0.0,
+    "trot_roll_ff_pos_deg": 0.0,
+    "ff_decouple": True,
+    "rear_clearance_m": 0.018,
+    "throttle_min_scale": 0.55,
+}
+
+# WBC 仿真 / 同参真机 — 四拍可读慢走
+NATURAL_WALK_WBC = {
+    **NATURAL_WALK_REAL,
+    "amp_front": 0.054,
+    "amp_rear": 0.062,
+    "nat_amp_front": 0.054,
+    "nat_amp_rear": 0.062,
+    "step_h": 0.036,
+    "nat_step_h": 0.036,
+    "step_h_front": 0.034,
+    "fwd_front_lift": 0.034,
+    "period": 1.00,
+    "nat_period": 1.00,
+    "stance": 0.75,
+    "lateral_sway": 0.009,
+    "com_sway_m": 0.026,
+    "spine_yaw_deg": 5.0,
+    "spine_roll_deg": 2.4,
+    "spine_phase_deg": 0.0,
+    "retract_front": 0.032,
+    "retract_rear": 0.036,
+    "retract_peak": 0.22,
+    "lift_peak": 0.26,
+    "toeoff_lift": 0.008,
+    "touchdown_compress": 0.006,
+    "rear_clearance_m": 0.020,
+    "throttle_min_scale": 0.50,
+    "kp_base_roll": 74.0,
+    "kd_base_roll": 22.0,
+}
+
+# 原地 hop — 与 SoftTrot/Walk/Spot 完全解耦；只改本 dict。
+JUMP_REAL = {
+    "height": 0.24,
+    "crouch_depth": 0.050,
+    "crouch_s": 0.30,
+    "push_s": 0.14,
+    "flight_s": 0.20,
+    "land_s": 0.25,
+    "recover_s": 0.28,
+    "flight_clearance": 0.030,
+    "land_compress": 0.014,
+    "push_vz": 0.60,
+    "push_extend": 0.022,
+    "front_stand_foot_pitch_deg": -90.0,
+    "kp_base_z": 80.0,
+}
+
+# WBC 仿真 — 稳的一版：单次腾空优先，不过度加后腿力
+JUMP_WBC = {
+    **JUMP_REAL,
+    "crouch_depth": 0.070,
+    "crouch_s": 0.24,
+    "push_s": 0.18,
+    "flight_s": 0.30,
+    "land_s": 0.34,
+    "recover_s": 0.40,
+    "flight_clearance": 0.075,
+    "land_compress": 0.022,
+    "push_vz": 2.2,
+    "push_extend": 0.016,
+    "kp_base_z": 140.0,
 }
 
 

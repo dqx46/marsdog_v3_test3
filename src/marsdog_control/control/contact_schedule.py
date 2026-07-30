@@ -172,8 +172,14 @@ class ContactSchedule:
             # WBC QP now soft-blends via force_scale (avoids LO/TD torque jumps).
             snap.stance[leg] = scheduled if gait is not None else measured
 
-            # Continuous force scale: phase edge × soft measured confidence
-            edge = self._phase_edge_scale(phase, stance_ratio)
+            # Continuous force scale: phase edge × soft measured confidence.
+            # Full-time stance (stand / jump hold / gait is None): no swing
+            # edges — otherwise phase wrap at 0/1 zeros force_scale and the
+            # dog skates (Fz≈0 → friction can't brake vx).
+            if gait is None or stance_ratio >= 1.0 - 1e-6:
+                edge = 1.0
+            else:
+                edge = self._phase_edge_scale(phase, stance_ratio)
             meas_s = 1.0 if measured else 0.0
             w = float(cfg.measure_force_weight)
             raw = edge * ((1.0 - w) * (1.0 if scheduled else 0.0) + w * meas_s)
@@ -193,6 +199,9 @@ class ContactSchedule:
         return snap
 
     def _phase_edge_scale(self, phase: float, stance_ratio: float) -> float:
+        # Continuous 100% stance: never ramp to 0 at phase wrap.
+        if stance_ratio >= 1.0 - 1e-6:
+            return 1.0
         edge = float(self.cfg.edge_blend)
         if edge <= 1e-9:
             return 1.0 if phase <= stance_ratio else 0.0
@@ -232,6 +241,9 @@ class ContactSchedule:
             return out
 
         stance_ratio = float(gait.stance_ratio)
+        if stance_ratio >= 1.0 - 1e-6:
+            out[:] = 1.0
+            return out
         for k in range(H):
             t_k = t_rel + k * dt
             for li, leg in enumerate(_LEGS):

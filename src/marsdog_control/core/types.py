@@ -28,6 +28,8 @@ class RobotMode(Enum):
     TROT = "trot"
     PACE = "pace"
     NATURAL = "natural"        # NaturalTrot 或 NaturalSoftTrot, 具体由启动参数选定的控制器承载
+    WALK = "walk"              # NaturalWalk 四拍慢走（与 SoftTrot/Spot 解耦）
+    JUMP = "jump"              # JumpController 原地 hop（与 SoftTrot/Walk/Spot 解耦）
     ESTOP = "estop"
     SHUTDOWN = "shutdown"
 

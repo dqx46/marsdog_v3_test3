@@ -3,9 +3,47 @@ from typing import Dict, Optional, Set
 from marsdog_control.backends import RobotBackend
 from marsdog_control.config.joints import JOINT_BY_ID, JOINT_MAP
 from marsdog_control.core.types import ControlOutput, RobotState
+from marsdog_control.motion.kinematics import motor_to_urdf, urdf_to_motor
 from marsdog_control.runtime.walk_services import WalkServices
 
 _REAL_JOINTS = [j for j in JOINT_MAP if j.bus != "none"]
+
+
+def _joint_scale(j) -> float:
+    """电机角 = URDF角 × scale；scale = sign × gear_ratio (与 kinematics 同源)。"""
+    gr = float(getattr(j, "gear_ratio", 1.0) or 1.0)
+    return float(j.sign) * gr
+
+
+def urdf_pose_to_motor(urdf_q: Dict[int, float]) -> Dict[int, float]:
+    """URDF 空间关节位姿 -> 电机空间位姿。
+
+    唯一真源: 与 :func:`kinematics.urdf_to_motor` 一致
+    (``m = urdf * sign * gear_ratio``, 再做电机硬限位钳制)。
+    前腿 tarsus 外置 1:2 → gear_ratio=2 必须在此生效；fade / recover /
+    shutdown 等非稳态路径也复用它, 与主控稳态循环同源。
+    """
+    out: Dict[int, float] = {}
+    for mid, urdf in urdf_q.items():
+        j = JOINT_BY_ID.get(mid)
+        if j is None:
+            continue
+        m_q = urdf_to_motor(j, urdf)
+        m_q = max(j.limit_lo, min(j.limit_hi, m_q))
+        out[mid] = m_q
+    return out
+
+
+def motor_pose_to_urdf(motor_q: Dict[int, float]) -> Dict[int, float]:
+    """电机空间关节位姿 -> URDF 空间位姿 (与 read_state / kinematics 互逆)。"""
+    out: Dict[int, float] = {}
+    for mid, pos in motor_q.items():
+        j = JOINT_BY_ID.get(mid)
+        if j is not None and _joint_scale(j) != 0:
+            out[mid] = motor_to_urdf(j, pos)
+        else:
+            out[mid] = 0.0
+    return out
 
 
 class RealRobotBackend(RobotBackend):
@@ -13,7 +51,8 @@ class RealRobotBackend(RobotBackend):
     实机后端实现。
     持有 WalkServices 和底层句柄，负责:
     1. 从底层物理传感器读取，映射回纯 URDF 空间 (RobotState)
-    2. 从纯 URDF 空间的 ControlOutput，映射为实机电机方向 (j.sign) 和物理限位，并下发
+    2. 从纯 URDF 空间的 ControlOutput，映射为实机电机方向 (j.sign × gear_ratio)
+       和物理限位，并下发
 
     契约: ``joint_pos`` / ``joint_vel`` 均为 URDF 空间；``vel_xyz`` 由动力学估计器填充
     （实机无 MoCap 时保持 0）。
@@ -51,15 +90,9 @@ class RealRobotBackend(RobotBackend):
             self.lz, self.evo, self.dm, self.incos, self.imu, online_ids
         )
 
-        # 转换为 URDF 空间
-        urdf_pos = {}
+        # 转换为 URDF 空间 (唯一真源映射, 与 send 互逆)
+        urdf_pos = motor_pose_to_urdf(raw_state.joint_pos)
         urdf_vel = {}
-        for mid, pos in raw_state.joint_pos.items():
-            j = JOINT_BY_ID.get(mid)
-            if j is not None and j.sign != 0:
-                urdf_pos[mid] = pos / j.sign
-            else:
-                urdf_pos[mid] = 0.0
 
         # Prefer driver velocity; fall back to finite difference on URDF pos
         dt = 0.005
@@ -71,8 +104,9 @@ class RealRobotBackend(RobotBackend):
             if mid not in urdf_pos:
                 continue
             motor_v = self._motor_velocity(j)
-            if j.sign != 0 and abs(motor_v) > 1e-9:
-                urdf_vel[mid] = motor_v / j.sign
+            scale = _joint_scale(j)
+            if scale != 0 and abs(motor_v) > 1e-9:
+                urdf_vel[mid] = motor_v / scale
             elif mid in self._prev_pos:
                 urdf_vel[mid] = (urdf_pos[mid] - self._prev_pos[mid]) / dt
             else:
@@ -99,31 +133,28 @@ class RealRobotBackend(RobotBackend):
         )
 
     def send(self, output: ControlOutput) -> None:
-        # 转换为电机空间
-        motor_targets = {}
+        # 位置: 走唯一真源映射, 保证与 fade/recover/shutdown 完全同源
+        motor_targets = urdf_pose_to_motor(output.target.q)
         motor_velocities = {}
         motor_trq_ff = {}
 
-        for mid, urdf_q in output.target.q.items():
+        for mid in output.target.q:
             j = JOINT_BY_ID.get(mid)
             if j is None:
                 continue
 
-            # 方向映射
-            m_q = urdf_q * j.sign
-
-            # 电机硬限位钳制 (因为 DM 前瞻等可能会略微超出，或者做最后兜底)
-            m_q = max(j.limit_lo, min(j.limit_hi, m_q))
-
-            motor_targets[mid] = m_q
-
-            # 速度和力矩的方向映射 (注意阻抗和力矩前馈的正负号)
+            # 速度/力矩与位置同一 scale (sign×gear_ratio)；
+            # 力矩 ÷ gear 保持做功 P=τ·ω 在减速两侧守恒。
+            scale = _joint_scale(j)
             if mid in output.target.dq:
-                motor_velocities[mid] = output.target.dq[mid] * j.sign
+                motor_velocities[mid] = output.target.dq[mid] * scale
 
             if output.trq_ff and mid in output.trq_ff:
-                # 力矩与位置同一方向变换 (做功 P = tau * dq 保持不变)
-                motor_trq_ff[mid] = output.trq_ff[mid] * j.sign
+                gr = float(getattr(j, "gear_ratio", 1.0) or 1.0)
+                # τ_motor = τ_joint / gear_ratio, 再乘 sign 对齐方向
+                motor_trq_ff[mid] = (
+                    output.trq_ff[mid] * float(j.sign) / gr if gr != 0 else 0.0
+                )
 
         # 下发到服务层
         self.svc.send_all(

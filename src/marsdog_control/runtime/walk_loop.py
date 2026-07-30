@@ -66,6 +66,10 @@ def mode_str(fsm) -> str:
     gait = fsm.active_gait
     if gait is None:
         return "stand"
+    if getattr(fsm, "jump_fwd", None) is not None and gait is fsm.jump_fwd:
+        return "jump_fwd"
+    if getattr(fsm, "walk_fwd", None) is not None and gait is fsm.walk_fwd:
+        return "walk_fwd" if fsm.direction is Direction.FWD else "walk_bwd"
     if gait is fsm.nat_fwd:
         return "natural_fwd" if fsm.direction is Direction.FWD else "natural_bwd"
     if gait in (fsm.pace_fwd, fsm.pace_bwd):
@@ -257,6 +261,11 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
                 )
             except Exception:
                 pass
+    if "base_z" not in imu_state and ctx.backend is not None and hasattr(ctx.backend, "data"):
+        try:
+            imu_state["base_z"] = float(ctx.backend.data.qpos[2])
+        except Exception:
+            pass
 
     # WBC 负责姿态/力：关掉 IMU 足高修正，避免双环抢控制
     if getattr(ctx.executor.config, "wbc_enabled", False) and getattr(
@@ -316,6 +325,23 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
     kp_phase = output.kp_phase
     trq_ff = output.trq_ff
     ctrl_dt = output.control_period_s
+
+    # Sim: kill soft-contact XY scrub while standing / jump hold.
+    # Off during crouch/push/flight so launch friction isn't stolen.
+    if ctx.backend is not None and hasattr(ctx.backend, "set_xy_hold_damp"):
+        hold_xy = False
+        if active_trot is None:
+            hold_xy = True
+        else:
+            fam = getattr(active_trot, "family", None)
+            if fam == "jump":
+                ph = getattr(getattr(active_trot, "phase", None), "value", "idle")
+                hold_xy = ph not in ("crouch", "push", "flight")
+            elif not bool(getattr(active_trot, "spot_turn_active", False)):
+                vc = getattr(active_trot, "vel_cmd", None)
+                if vc is not None and abs(float(vc[0])) <= 0.05:
+                    hold_xy = True
+        ctx.backend.set_xy_hold_damp(150.0 if hold_xy else 0.0)
 
     # ── Send ──
     if ctx.backend is not None:

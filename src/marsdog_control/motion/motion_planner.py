@@ -83,6 +83,14 @@ def build_motion_target(fsm, state, imu_dz, imu_state, online, cur_pos,
             t_rel = fsm.clock.time() - fsm.t_gait
         else:
             t_rel = time.time() - fsm.t_gait
+        # Jump liftoff uses measured vz/z — note before get_targets advances FSM.
+        if getattr(gait, "family", None) == "jump":
+            vz = float(getattr(state, "vel_xyz", (0.0, 0.0, 0.0))[2])
+            if hasattr(gait, "note_base_vz"):
+                gait.note_base_vz(vz)
+            # Prefer IMU-integrated height if planner passed it via imu_state.
+            if imu_state and "base_z" in imu_state and hasattr(gait, "note_base_z"):
+                gait.note_base_z(float(imu_state["base_z"]))
         targets = gait.get_targets(t_rel, imu_dz=imu_dz, imu_state=imu_state)
     else:
         targets = fsm.stand.get_targets(0)
@@ -109,7 +117,9 @@ def build_motion_target(fsm, state, imu_dz, imu_state, online, cur_pos,
                     targets[mid] = fsm.blend_from[mid] * (1.0 - s) + targets[mid] * s
 
     # 细粒度抗 stick-slip 限速(步态平滑, 非安全闸; 保留在 motion 层)
-    if gait is not None and isinstance(gait, StablePace):
+    if gait is not None and getattr(gait, "family", None) == "jump":
+        rl_max = 1.0
+    elif gait is not None and type(gait).__name__ == "StablePace":
         rl_max = 0.0175
     else:
         rl_max = 0.0087

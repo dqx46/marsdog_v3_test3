@@ -54,6 +54,8 @@ class WalkControlStack:
     pace_fwd: GaitController
     pace_bwd: GaitController
     nat_fwd: GaitController
+    walk_fwd: GaitController
+    jump_fwd: GaitController
     fsm: RuntimeStateMachine
     safety: SafetySupervisor
     imu_ctrl: ImuAttitudeController
@@ -95,6 +97,8 @@ def build_gait_controllers(
     *,
     natural_active: bool,
     natural_params: dict,
+    walk_params: Optional[dict] = None,
+    jump_params: Optional[dict] = None,
     no_spine: bool = False,
 ):
     """Wrap ``gait_recipes.build_controller_set`` with walk-startup defaults."""
@@ -105,6 +109,8 @@ def build_gait_controllers(
         # Always pass recipe dict so soft-trot extras (rear_clearance_m, retract, …)
         # apply; cfg alone does not carry every NATURAL_SOFT_TROT_WBC key.
         natural_params=natural_params,
+        walk_params=walk_params,
+        jump_params=jump_params,
         natural_spine_yaw_deg=(
             0.0 if no_spine else (
                 None if natural_active
@@ -134,6 +140,8 @@ def build_runtime_fsm(
     *,
     fwd: ForwardGaitAmps,
     natural_configured: bool,
+    natural_walk: bool = False,
+    natural_jump: bool = False,
     start_mode: RobotMode,
     height: float,
 ) -> RuntimeStateMachine:
@@ -143,6 +151,8 @@ def build_runtime_fsm(
         fwd_amp_front=fwd.amp_front,
         fwd_amp_rear=fwd.amp_rear,
         natural_configured=natural_configured,
+        natural_walk=natural_walk,
+        natural_jump=natural_jump,
         start_mode=start_mode,
     )
 
@@ -251,6 +261,10 @@ def assemble_walk_control_stack(
     gp_trot_threshold: float,
     gp_deadzone: float,
     natural_soft: bool = False,
+    natural_walk: bool = False,
+    walk_params: Optional[dict] = None,
+    natural_jump: bool = False,
+    jump_params: Optional[dict] = None,
     trot_flag: bool = False,
     no_spine: bool = False,
     load_trim_cal: Optional[Callable[[], Any]] = None,
@@ -285,9 +299,12 @@ def assemble_walk_control_stack(
         gait_cfg,
         natural_active=natural_active,
         natural_params=natural_params,
+        walk_params=walk_params,
+        jump_params=jump_params,
         no_spine=no_spine,
     )
-    stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd, nat_fwd = controllers.as_tuple()
+    (stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd,
+     nat_fwd, walk_fwd, jump_fwd) = controllers.as_tuple()
 
     print(f"[转向层] 步幅差={gait_cfg.turn_amp_diff*100:.1f}cm "
           f"跨步={gait_cfg.turn_y_amp*100:.1f}cm "
@@ -306,14 +323,23 @@ def assemble_walk_control_stack(
     fsm = build_runtime_fsm(
         controllers, drive,
         fwd=fwd,
-        natural_configured=natural_active,
+        natural_configured=bool(natural_soft or natural_active),
+        natural_walk=natural_walk,
+        natural_jump=natural_jump,
         start_mode=start_mode,
         height=gait_cfg.height,
     )
     safety = build_safety_supervisor()
-    walk_name = (
-        "NaturalSoftTrot" if (fsm.walk_is_natural and natural_soft)
-        else "NaturalTrot" if fsm.walk_is_natural else "StableTrot")
+    if natural_jump:
+        walk_name = "Jump"
+    elif natural_walk:
+        walk_name = "NaturalWalk"
+    elif fsm.walk_is_natural and natural_soft:
+        walk_name = "NaturalSoftTrot"
+    elif fsm.walk_is_natural:
+        walk_name = "NaturalTrot"
+    else:
+        walk_name = "StableTrot"
     print(f"[fsm] 起始模式={fsm.mode.value}  "
           f"摇杆/空格 走= {walk_name}")
 
@@ -327,6 +353,8 @@ def assemble_walk_control_stack(
         pace_fwd=pace_fwd,
         pace_bwd=pace_bwd,
         nat_fwd=nat_fwd,
+        walk_fwd=walk_fwd,
+        jump_fwd=jump_fwd,
         fsm=fsm,
         safety=safety,
         imu_ctrl=imu_ctrl,

@@ -78,6 +78,8 @@ class SimPhysicsOptions:
 
     ground_friction: Tuple[float, float, float] = _DEFAULT_GROUND_FRICTION
     foot_friction: Optional[Tuple[float, float, float]] = None
+    # MuJoCo contact timeconst/dampratio — smaller timeconst = harder floor.
+    foot_solref: Tuple[float, float] = (0.02, 1.0)
 
 
 def _friction_str(f: Tuple[float, float, float]) -> str:
@@ -281,9 +283,8 @@ def _build_physics_mjcf(physics: Optional[SimPhysicsOptions] = None) -> str:
         a.set("kv", f"{g['kd']:.1f}")
         a.set("forcelimited", "true")
         a.set("forcerange", f"-{fmax} {fmax}")
-        a.set("ctrllimited", "true")
-        u_lo, u_hi = urdf_limits(j)
-        a.set("ctrlrange", f"{min(u_lo, u_hi)} {max(u_lo, u_hi)}")
+        a.set("ctrllimited", "false")
+        # Removed ctrlrange to allow feedforward torque to push ctrl outside limits
 
     tree.write(mjcf_path, xml_declaration=True, encoding="unicode")
     return mjcf_path
@@ -304,6 +305,9 @@ class SimRobotBackend(RobotBackend):
         self._mjcf_path = _build_physics_mjcf(physics_options)
         self.model = mujoco.MjModel.from_xml_path(self._mjcf_path)
         self.data = mujoco.MjData(self.model)
+        # Soft-contact scrub: viscous freejoint XY damp while standing/holding
+        # (1/s). 0 = off. Walk loop enables this when vx_cmd≈0.
+        self._xy_hold_damp = 0.0
         # URDF <limit effort> 会写成 jnt_actfrcrange；仅改 actuator forcerange
         # 不够——力矩仍被关节侧钳死(前腿 tarsus 旧值 0.4119Nm → 跪地)。
         self._apply_joint_actuator_force_limits()
@@ -401,7 +405,12 @@ class SimRobotBackend(RobotBackend):
         for fn in _FOOT_BODIES:
             gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, fn)
             if gid >= 0:
-                self.model.geom_solref[gid] = [0.02, 1.0]
+                solref = (
+                    self._physics.foot_solref
+                    if self._physics is not None
+                    else (0.02, 1.0)
+                )
+                self.model.geom_solref[gid] = [float(solref[0]), float(solref[1])]
                 self.model.geom_solimp[gid] = [0.9, 0.95, 0.001, 0.5, 2.0]
 
     def _apply_foot_friction(self) -> None:
@@ -604,18 +613,28 @@ class SimRobotBackend(RobotBackend):
             ctrl = q_des
             if abs(kp) > 1e-6:
                 ctrl += (kd / kp) * qd_des + trq / kp
-            ctrl = clamp_urdf(j, ctrl)
+            # Do not clamp ctrl here, allow it to exceed limits for feedforward torque
 
             self.data.ctrl[aid] = ctrl
 
     def shutdown(self, reason: str = "") -> None:
         pass
 
+    def set_xy_hold_damp(self, damp_per_s: float) -> None:
+        """Viscous freejoint XY damp (1/s). Use while standing to kill scrub."""
+        self._xy_hold_damp = max(0.0, float(damp_per_s))
+
     def step(self, n: int = N_SUBSTEPS) -> None:
+        damp = float(self._xy_hold_damp)
+        decay = math.exp(-damp * PHYSICS_DT) if damp > 1e-9 else 1.0
         for _ in range(n):
             self._sync_passive_tarsus()
             mujoco.mj_step(self.model, self.data)
             self._sync_passive_tarsus()
+            if decay < 1.0:
+                # Freejoint linear XY only — leave yaw/vertical alone.
+                self.data.qvel[0] *= decay
+                self.data.qvel[1] *= decay
 
     @property
     def sim_time(self) -> float:

@@ -38,11 +38,27 @@ def bringup_imu(
     angle_tau_s: float,
     gyro_tau_s: float,
     require_imu: bool = False,
+    ensure_hz: int = 200,
 ) -> tuple[Any, bool]:
-    """Open the first available IMU port. Returns ``(imu_or_None, imu_ok)``."""
+    """Open the first available IMU port. Returns ``(imu_or_None, imu_ok)``.
+
+    Before opening the reader thread, persist ``ensure_hz`` (default 200) to
+    WT901 flash if RRATE is wrong — sample firmware defaults to 10 Hz.
+    """
     for imu_port in [imu_device]:
         if not os.path.exists(imu_port):
             continue
+        if ensure_hz:
+            try:
+                from marsdog_control.apps.tools.calibration.imu_set_rate import (
+                    ensure_rate,
+                )
+                ok_rate, msg, _ = ensure_rate(imu_port, imu_baud, ensure_hz)
+                print(f"[IMU] 回传速率: {msg}")
+                if not ok_rate:
+                    print(f"[IMU] WARNING: 未能固定到 {ensure_hz}Hz")
+            except Exception as e:
+                print(f"[IMU] WARNING: 速率自检失败: {e}")
         candidate = imu_cls(
             imu_port, imu_baud,
             angle_tau_s=max(0.0, angle_tau_s),
@@ -197,14 +213,20 @@ def fade_to_stand(
     leg_pitch_test: bool = False,
 ) -> StandReadyResult:
     """Fade into the stand pose and optionally build a direction-test base."""
-    stand_pos = stand.get_targets(0)
+    # stand.get_targets() 是纯 URDF 空间; cur_pos 来自 board.get_angles() 是电机空间。
+    # smooth_transition / recover 直连 send_all(电机空间), 因此这里必须先把站姿目标
+    # 经唯一真源映射 urdf_pose_to_motor 转到电机空间(等价于主控 backend.send 的 j.sign),
+    # 否则 sign=-1 的左侧关节会被当电机值直发而反向(淡入错→主循环snap正→Ctrl+C又错)。
+    from marsdog_control.backends.real import urdf_pose_to_motor
+    stand_pos = stand.get_targets(0)                # URDF 空间(供 direction_test_base / 返回给主循环)
+    stand_motor = urdf_pose_to_motor(stand_pos)     # 电机空间(供 fade/recover 实际下发)
     print(f"[fade] 过渡到正常站姿 ({fade_s:.1f}s)...")
     ok = smooth_transition(
-        lz, evo, dm, incos, cur_pos, stand_pos, fade_s, label="stand")
+        lz, evo, dm, incos, cur_pos, stand_motor, fade_s, label="stand")
     if not ok:
         shutdown_motors(lz, evo, dm, incos)
         return StandReadyResult(ok=False)
-    if not recover_lz_stand_faults(lz, evo, dm, incos, online, stand_pos):
+    if not recover_lz_stand_faults(lz, evo, dm, incos, online, stand_motor):
         shutdown_motors(lz, evo, dm, incos)
         return StandReadyResult(ok=False)
     print("[ok] 已站立\n")

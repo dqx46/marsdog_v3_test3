@@ -26,6 +26,10 @@ from marsdog_control.motion.gait_recipes import (
     NATURAL_SOFT_TROT_REAL,
     NATURAL_SOFT_TROT_WBC,
     NATURAL_TROT_REAL,
+    NATURAL_WALK_REAL,
+    NATURAL_WALK_WBC,
+    JUMP_REAL,
+    JUMP_WBC,
 )
 from marsdog_control.motion.tarsus_bench import TarsusBenchConfig
 from marsdog_control.runtime.walk_state import WalkRuntimeState
@@ -46,6 +50,10 @@ class WalkStartupContext:
     natural_active: bool
     natural_soft: bool
     natural_params: dict
+    natural_walk: bool
+    walk_params: dict
+    natural_jump: bool
+    jump_params: dict
     trot_flag: bool
     no_spine: bool
     joint_direction_test: bool
@@ -165,27 +173,61 @@ def prepare_walk_startup(
               f"仅 ID 3/7/11/14 会运动")
 
     natural_soft = bool(args.natural_soft_trot)
-    natural_active = bool(args.natural_trot or natural_soft)
+    natural_walk = bool(getattr(args, "natural_walk", False))
+    natural_jump = bool(getattr(args, "jump", False))
+    # --jump 覆盖 --natural-walk
+    if natural_jump and natural_walk:
+        print("[jump] --jump 覆盖 --natural-walk；Walk 路径不激活")
+        natural_walk = False
+    # SoftTrot / NaturalTrot 仍算 natural_active；Walk/Jump 也启 tarsus。
+    natural_active = bool(
+        args.natural_trot or natural_soft or natural_walk or natural_jump
+    )
     if natural_active:
         print("[tarsus] 约定: 上电前已手动掰到达妙硬限位零点(无 CLI 确认开关)")
 
-    natural_params = dict(
-        NATURAL_SOFT_TROT_REAL if natural_soft else NATURAL_TROT_REAL
-    )
-    # WBC 仿真大步幅：在 soft 预设基础上加大摆幅（仍可被显式 --amp-* 覆盖）
-    if natural_soft and bool(getattr(args, "wbc", False)):
+    # SoftTrot 预设仍灌进 args（默认路径）；Walk/Jump 用独立 params，不覆盖 SoftTrot 配方数字。
+    # SoftTrot 统一用 NATURAL_SOFT_TROT_WBC 大步几何（amp/period/stance），
+    # 不再因未开 --wbc 退回 REAL 小碎步；--wbc 只切换控制器(WBC+MPC vs VMC)。
+    if natural_soft:
         natural_params = dict(NATURAL_SOFT_TROT_WBC)
+    else:
+        natural_params = dict(NATURAL_TROT_REAL)
     print(
-            f"[nat] WBC 平稳预设: amp={natural_params['amp_front']*100:.1f}/"
+            f"[nat] SoftTrot 大步预设: amp={natural_params['amp_front']*100:.1f}/"
             f"{natural_params['amp_rear']*100:.1f}cm "
             f"front_scale={natural_params.get('fwd_front_amp_scale', 1.0):.2f} "
             f"period={natural_params['period']:.2f}s"
         )
     overridden: list = []
-    if natural_active:
+    # SoftTrot 默认开启时始终灌 Soft 预设（即使同时 --jump/--natural-walk，nat_fwd 仍要 Soft）。
+    if natural_soft or bool(args.natural_trot):
         overridden = apply_preset_preserving_cli(args, natural_params)
         if overridden:
             print("[nat] 显式 CLI 覆盖预设: " + ", ".join(overridden))
+
+    walk_params = dict(
+        NATURAL_WALK_WBC if bool(getattr(args, "wbc", False)) else NATURAL_WALK_REAL
+    )
+    if natural_walk:
+        print(
+            f"[walk] NaturalWalk 预设: amp={walk_params['amp_front']*100:.1f}/"
+            f"{walk_params['amp_rear']*100:.1f}cm "
+            f"period={walk_params['period']:.2f}s stance={walk_params['stance']:.2f} "
+            f"sway={walk_params['lateral_sway']*1000:.1f}mm "
+            f"spine={walk_params['spine_yaw_deg']:.1f}/"
+            f"{walk_params['spine_roll_deg']:.1f}°"
+        )
+
+    jump_params = dict(
+        JUMP_WBC if bool(getattr(args, "wbc", False)) else JUMP_REAL
+    )
+    if natural_jump:
+        print(
+            f"[jump] Jump 预设: crouch={jump_params['crouch_depth']*1000:.0f}mm "
+            f"push={jump_params['push_s']:.2f}s flight={jump_params['flight_s']:.2f}s "
+            f"push_vz={jump_params['push_vz']:.2f}m/s"
+        )
 
     # Preset may mutate args; bootstrap after preset so RuntimeConfig sees final values.
     runtime_config = emit_typed_config(args)
@@ -338,6 +380,10 @@ def prepare_walk_startup(
         natural_active=natural_active,
         natural_soft=natural_soft,
         natural_params=natural_params,
+        natural_walk=natural_walk,
+        walk_params=walk_params,
+        natural_jump=natural_jump,
+        jump_params=jump_params,
         trot_flag=bool(getattr(args, "trot", False)),
         no_spine=bool(getattr(args, "no_spine", False)),
         joint_direction_test=joint_direction_test,

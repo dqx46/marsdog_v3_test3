@@ -90,6 +90,10 @@ class DynamicsConfig:
     f_max: float = 80.0
     mpc_horizon: int = 10
     mpc_dt: float = 0.03
+    # MPC 求解周期(s): 0=每 tick 解(200Hz, 计算重, 仿真会被拖成慢放);
+    # 0.02=50Hz, 中间 hold+LPF。仿真/真机(RK3588)统一用它保证 1× 实时,
+    # 从而开/不开 WBC 的仿真步频一致(见 ForcePlanner)。
+    mpc_period_s: float = 0.02
     tau_limit_nm: float = 25.0
     kp_base_z: float = 30.0
     kd_base_z: float = 10.0

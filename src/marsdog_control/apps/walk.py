@@ -390,14 +390,26 @@ def main(args=None):
         gp_trot_threshold=GP_TROT_THRESHOLD,
         gp_deadzone=GP_DEADZONE,
         natural_soft=startup.natural_soft,
+        natural_walk=getattr(startup, "natural_walk", False),
+        walk_params=getattr(startup, "walk_params", None),
+        natural_jump=getattr(startup, "natural_jump", False),
+        jump_params=getattr(startup, "jump_params", None),
         trot_flag=startup.trot_flag,
         no_spine=startup.no_spine,
         load_trim_cal=_load_trim_cal,
     )
     stand = stack.stand
 
-    startup_gait = (stack.nat_fwd if startup.natural_active
-                    else (stack.trot_fwd if startup.trot_flag else None))
+    if getattr(startup, "natural_jump", False):
+        startup_gait = stack.jump_fwd
+    elif getattr(startup, "natural_walk", False):
+        startup_gait = stack.walk_fwd
+    elif startup.natural_active:
+        startup_gait = stack.nat_fwd
+    elif startup.trot_flag:
+        startup_gait = stack.trot_fwd
+    else:
+        startup_gait = None
     if startup_gait is not None:
         assert_foot_tracking_requires_tarsus(
             front_foot_track_deg=startup.front_foot_track_deg,

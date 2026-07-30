@@ -116,8 +116,11 @@ def build_board_command_batches(
                     if rt.dm_tarsus_active else rt.default_dm_kd))
         dq_cmd = max(-rt.dm_dq_max_rps, min(rt.dm_dq_max_rps, dq))
         dq_send = dq_cmd if rt.dm_dq_feedforward else 0.0
-        kp_send = kp * kp_scale
-        kd_send = kd * kp_scale
+        # JOINT_GAINS 按关节空间刚度标定；外置减速 N 时电机端 kp/kd = K_j / N^2
+        gr = float(getattr(j, "gear_ratio", 1.0) or 1.0)
+        gr2 = gr * gr if gr != 0.0 else 1.0
+        kp_send = kp * kp_scale / gr2
+        kd_send = kd * kp_scale / gr2
         out.dm[mid] = (kp_send, kd_send, q, dq_send, 0.0)
         _record(mid, q, dq_send, kp_send, kd_send, 0.0)
 

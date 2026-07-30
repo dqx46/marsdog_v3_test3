@@ -56,19 +56,27 @@ RL_THIGH_LEN = _RL_L1
 RL_SHIN_LEN  = _RL_L2
 RL_FOOT_LEN  = 0.0  # pantograph 已合入 L1
 
+def _joint_scale(joint) -> float:
+    """电机角 = URDF角 × sign × gear_ratio。gear_ratio 为外置传动比(默认1)。"""
+    gr = float(getattr(joint, "gear_ratio", 1.0) or 1.0)
+    return float(joint.sign) * gr
+
+
 def urdf_to_motor(joint, urdf_angle):
-    return urdf_angle * joint.sign
+    return urdf_angle * _joint_scale(joint)
 
 def motor_to_urdf(joint, motor_val):
-    return motor_val / joint.sign if joint.sign != 0 else 0.0
+    s = _joint_scale(joint)
+    return motor_val / s if s != 0 else 0.0
 
 
 def urdf_limits(joint) -> tuple[float, float]:
     """joint_config limit_lo/hi 是电机空间；MuJoCo/URDF 用关节角空间。"""
-    if joint.sign == 0:
+    s = _joint_scale(joint)
+    if s == 0:
         return joint.limit_lo, joint.limit_hi
-    u_lo = joint.limit_lo / joint.sign
-    u_hi = joint.limit_hi / joint.sign
+    u_lo = joint.limit_lo / s
+    u_hi = joint.limit_hi / s
     return min(u_lo, u_hi), max(u_lo, u_hi)
 
 

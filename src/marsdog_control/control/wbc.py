@@ -90,15 +90,21 @@ class WholeBodyController:
         swing_acc_des: dict[str, np.ndarray] = None,
         postural_acc_des: np.ndarray = None,
         force_scale: dict[str, float] = None,
+        stance_acc_des: dict[str, np.ndarray] = None,
     ) -> np.ndarray:
         """Solve WBC QP.
 
         ``force_scale`` (preferred) continuously blends stance↔swing so LO/TD
         does not hard-flip QP structure. Falls back to binary ``leg_is_stance``
         when omitted (unit tests / legacy callers).
+
+        ``stance_acc_des``: per-leg world-frame foot accel for stance (default 0).
+        Needed to kill soft-contact scrub — pure a=0 keeps a constant slide.
         """
         if swing_acc_des is None:
             swing_acc_des = {}
+        if stance_acc_des is None:
+            stance_acc_des = {}
 
         # Continuous contact weight s∈[0,1]: 1=full stance, 0=full swing.
         # Binary stance alone caused ~30× torque steps at schedule flips.
@@ -197,7 +203,7 @@ class WholeBodyController:
         if postural_acc_des is not None:
             q_obj[6 : self.nv] = -self.config.weight_posture * postural_acc_des
 
-        # Soft blend: stance wants a≈0, swing tracks a_des; weight/target by s.
+        # Soft blend: stance tracks a_st (default 0); swing tracks a_sw.
         w_st = self.config.weight_stance_acc
         w_sw = self.config.weight_swing_acc
         for i, foot_name in enumerate(self.foot_names):
@@ -207,8 +213,10 @@ class WholeBodyController:
             a_sw = np.asarray(
                 swing_acc_des.get(leg_key, np.zeros(3)), dtype=float
             ).reshape(3)
-            # s=1 → a_des=0 (stance); s=0 → a_des=swing PD
-            a_des = (1.0 - s) * a_sw
+            a_st = np.asarray(
+                stance_acc_des.get(leg_key, np.zeros(3)), dtype=float
+            ).reshape(3)
+            a_des = (1.0 - s) * a_sw + s * a_st
             w = s * w_st + (1.0 - s) * w_sw
             P[: self.nv, : self.nv] += w * (Ji.T @ Ji)
             q_obj[: self.nv] += w * (Ji.T @ (a_drift_list[i] - a_des))
