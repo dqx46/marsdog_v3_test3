@@ -95,6 +95,8 @@ class DynamicsConfig:
     # 从而开/不开 WBC 的仿真步频一致(见 ForcePlanner)。
     mpc_period_s: float = 0.02
     tau_limit_nm: float = 25.0
+    # WBC 关节力矩输出增益（QP 限幅之后再乘；实机先用 0.5 软化）
+    wbc_tau_scale: float = 0.5
     kp_base_z: float = 30.0
     kd_base_z: float = 10.0
     kp_base_roll: float = 85.0  # roll-first; cut diagonal-trot sway (target pk≤5.5°)

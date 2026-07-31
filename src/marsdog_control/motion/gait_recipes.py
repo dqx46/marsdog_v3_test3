@@ -626,7 +626,7 @@ NATURAL_SOFT_TROT_REAL = {
 }
 
 # WBC+MPC — 路线 B：真狗小跑 (diagonal trot)
-# duty≈0.56、T≈0.58s、后驱；满杆包络收紧避免 st→0.50 翻车
+# duty≈0.56、T≈0.87s（原 0.58s 的 2/3 步频）、后驱；满杆包络收紧避免 st→0.50 翻车
 # Dog-trot WBC: light cadence + rear drive. Front swing must clear ground —
 # mid-stick step_h_front≈2cm left ~92% swing-drag and stalled after first strides.
 NATURAL_SOFT_TROT_WBC = {
@@ -639,8 +639,8 @@ NATURAL_SOFT_TROT_WBC = {
     "nat_step_h": 0.048,
     "step_h_front": 0.045,
     "fwd_front_lift": 0.045,
-    "period": 0.58,
-    "nat_period": 0.58,
+    "period": 0.87,
+    "nat_period": 0.87,
     "stance": 0.56,
     "fwd_front_amp_scale": 1.0,
     "lateral_sway": 0.0025,

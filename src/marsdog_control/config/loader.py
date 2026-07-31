@@ -123,6 +123,7 @@ def runtime_config_from_args(args: Namespace) -> RuntimeConfig:
         mpc_horizon=int(_get(args, "mpc_horizon", _D_dyn.mpc_horizon)),
         mpc_dt=float(_get(args, "mpc_dt", _D_dyn.mpc_dt)),
         tau_limit_nm=float(_get(args, "wbc_tau_limit", _D_dyn.tau_limit_nm)),
+        wbc_tau_scale=float(_get(args, "wbc_tau_scale", _D_dyn.wbc_tau_scale)),
         kp_base_z=float(_get(args, "kp_base_z", _D_dyn.kp_base_z)),
         kd_base_z=float(_get(args, "kd_base_z", _D_dyn.kd_base_z)),
         kp_base_roll=float(_get(args, "kp_base_roll", _D_dyn.kp_base_roll)),

@@ -4,9 +4,9 @@
 # 所有固定别名优先绑定 USB Hub 物理口 (ID_PATH), 只要不换插口即可稳定生效
 # 换插口后需重新运行: sudo python3 setup_usb_devices.py --install
 
-SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.1:1.0", SYMLINK+="marsdog_lz_can_a", GROUP="dialout", MODE="0666"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.3:1.0", SYMLINK+="marsdog_lz_can_b", GROUP="dialout", MODE="0666"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fc880000.usb-usb-0:1.1.1:1.0", SYMLINK+="marsdog_incos_can", GROUP="dialout", MODE="0666"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fc800000.usb-usb-0:1.2:1.0", SYMLINK+="marsdog_evo_can", GROUP="dialout", MODE="0666"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fc880000.usb-usb-0:1.1.3:1.0", SYMLINK+="marsdog_dm_can", GROUP="dialout", MODE="0666"
-SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-fc880000.usb-usb-0:1.3:1.0", SYMLINK+="marsdog_imu", GROUP="dialout", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-xhci-hcd.0.auto-usb-0:1.2.1:1.0", SYMLINK+="marsdog_lz_can_a", GROUP="dialout", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-xhci-hcd.0.auto-usb-0:1.2.3:1.0", SYMLINK+="marsdog_lz_can_b", GROUP="dialout", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-xhci-hcd.0.auto-usb-0:1.3.1:1.0", SYMLINK+="marsdog_incos_can", GROUP="dialout", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-xhci-hcd.0.auto-usb-0:1.2.2:1.0", SYMLINK+="marsdog_evo_can", GROUP="dialout", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-xhci-hcd.0.auto-usb-0:1.3.3:1.0", SYMLINK+="marsdog_dm_can", GROUP="dialout", MODE="0666"
+SUBSYSTEM=="tty", ENV{ID_PATH}=="platform-xhci-hcd.0.auto-usb-0:1.4:1.0", SYMLINK+="marsdog_imu", GROUP="dialout", MODE="0666"

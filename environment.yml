@@ -16,3 +16,5 @@ dependencies:
   - pyserial
   - pyyaml
   - pip
+  - pip:
+      - clarabel>=0.4.1

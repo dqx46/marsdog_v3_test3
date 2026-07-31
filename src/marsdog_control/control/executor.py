@@ -227,6 +227,9 @@ class CommandExecutor:
                 wbc_cfg.kp_base_pitch = dyn.kp_base_pitch
                 wbc_cfg.kd_base_pitch = dyn.kd_base_pitch
                 wbc_cfg.tau_limit_nm = dyn.tau_limit_nm
+                wbc_cfg.tau_scale = float(
+                    getattr(dyn, "wbc_tau_scale", wbc_cfg.tau_scale)
+                )
 
             self._wbc_ctrl = WholeBodyController(wbc_cfg, reduced=self._reduced)
             I_base = self._reduced.get_locked_inertia()
@@ -258,7 +261,8 @@ class CommandExecutor:
                 f"[Executor] WBC+MPC on reduced model mass={self._reduced.total_mass:.3f} kg "
                 f"nv={self._reduced.nv} f_max={mpc_cfg.f_max} mu={mpc_cfg.mu} "
                 f"force_lpf={self.config.force_lpf_alpha} edge={self.config.contact_edge_blend} "
-                f"estimate={self.config.base_estimate_mode}"
+                f"estimate={self.config.base_estimate_mode} "
+                f"tau_scale={wbc_cfg.tau_scale:.2f}"
             )
 
         from marsdog_control.control.dynamics_telemetry import DynamicsTelemetry

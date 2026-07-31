@@ -20,7 +20,7 @@ from marsdog_control.config.joints import (
     JOINT_BY_NAME as JBN,
 )
 from marsdog_control.control.executor import resolve_gains
-from marsdog_control.motion.kinematics import front_foot_pitch_from_motor
+from marsdog_control.motion.kinematics import front_foot_pitch_from_motor, motor_to_urdf
 
 
 @dataclass
@@ -220,21 +220,29 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
     for j in runtime.real_joints:
         mid = j.motor_id
         sample = samples.get(mid)
+        # targets[] 是 URDF 关节角；驱动反馈 / DM command_q 是电机角。
+        # 日志统一写 URDF 帧，否则 sign=-1 / gear≠1 的关节会出现百来度假误差。
         if j.mtype == "dm":
-            tgt = targets.get(mid, runtime.dm_fixed_targets.get(mid, float('nan')))
+            if mid in targets:
+                tgt = targets[mid]
+            elif mid in runtime.dm_fixed_targets:
+                # bringup 缓存的是电机角，这里转到 URDF 再记。
+                tgt = motor_to_urdf(j, runtime.dm_fixed_targets[mid])
+            else:
+                tgt = float('nan')
             if sample is not None:
-                act = sample.position
+                act_motor = sample.position
                 tq = sample.torque
                 timing = sample.timing
             else:
-                act = dm.get_position(mid) if dm is not None else None
+                act_motor = dm.get_position(mid) if dm is not None else None
                 try:
                     tq = dm.get_torque(mid) if dm is not None else float('nan')
                 except Exception:
                     tq = float('nan')
                 timing = dm.get_timing(mid) if dm is not None else {}
-            cmd = timing.get("command_q", tgt)
-            cmd_dq = timing.get("command_dq", 0.0)
+            cmd_motor = timing.get("command_q", None)
+            cmd_dq_motor = timing.get("command_dq", 0.0)
             actual_kp = timing.get("command_kp", float("nan"))
             actual_kd = timing.get("command_kd", float("nan"))
             phase_scale = 1.0
@@ -242,29 +250,29 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
         else:
             tgt = targets.get(mid, float('nan'))
             if sample is not None:
-                act = sample.position
+                act_motor = sample.position
                 tq = sample.torque
             elif j.mtype == "lz":
-                act = lz.get_position(mid)
+                act_motor = lz.get_position(mid)
                 try:
                     tq = lz.get_torque(mid)
                 except Exception:
                     tq = float('nan')
             elif j.mtype == "incos":
-                act = incos.get_position(mid) if incos is not None else None
+                act_motor = incos.get_position(mid) if incos is not None else None
                 try:
                     tq = incos.get_torque(mid) if incos is not None else float('nan')
                 except Exception:
                     tq = float('nan')
             else:
-                act = evo.get_position(mid)
+                act_motor = evo.get_position(mid)
                 try:
                     tq = evo.get_torque(mid)
                 except Exception:
                     tq = float('nan')
             timing = {}
-            cmd = tgt
-            cmd_dq = float("nan")
+            cmd_motor = None  # non-DM: command == URDF target
+            cmd_dq_motor = float("nan")
             phase_scale = kp_phase.get(mid, 1.0) if kp_phase else 1.0
             ff_nm = trq_ff.get(mid) if trq_ff and mid in trq_ff else None
             actual_kp, actual_kd, _ = resolve_gains(
@@ -275,14 +283,22 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
                 phase_scale, ff_nm)
             if ff_nm is None:
                 ff_nm = runtime.joint_gains.get(j.name, {}).get("trq_ff", 0.0)
-        act = act if act is not None else float('nan')
+        act_motor = act_motor if act_motor is not None else float('nan')
         tq = tq if tq is not None else float('nan')
+        act = (motor_to_urdf(j, act_motor)
+               if math.isfinite(act_motor) else float('nan'))
+        if cmd_motor is not None and math.isfinite(cmd_motor):
+            cmd = motor_to_urdf(j, cmd_motor)
+        else:
+            cmd = tgt
+        cmd_dq = (motor_to_urdf(j, cmd_dq_motor)
+                  if math.isfinite(cmd_dq_motor) else float('nan'))
         err_val = (math.degrees(act - tgt)
                    if (tgt is not None and math.isfinite(tgt)
-                       and not math.isnan(act)) else float('nan'))
+                       and math.isfinite(act)) else float('nan'))
         cmd_err_val = (math.degrees(act - cmd)
                        if (cmd is not None and math.isfinite(cmd)
-                           and not math.isnan(act)) else float('nan'))
+                           and math.isfinite(act)) else float('nan'))
         comp = imu_ctrl.components if imu_ctrl else {}
         writer.writerow([
             f"{t_s:.4f}", f"{run_t_s:.4f}", mode, fsm_mode,
@@ -320,13 +336,13 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
             f"{foot_pitch_log['fr'][0]:.2f}", f"{foot_pitch_log['fr'][1]:.2f}",
             f"{foot_pitch_log['fr'][2]:.2f}",
             mid, j.name,
-            f"{math.degrees(tgt):.3f}" if not math.isnan(tgt) else "nan",
+            f"{math.degrees(tgt):.3f}" if math.isfinite(tgt) else "nan",
             f"{math.degrees(cmd):.3f}" if cmd is not None and math.isfinite(cmd) else "nan",
             f"{cmd_dq:.4f}" if math.isfinite(cmd_dq) else "nan",
-            f"{math.degrees(act):.3f}" if not math.isnan(act) else "nan",
-            f"{err_val:.3f}" if not math.isnan(err_val) else "nan",
-            f"{cmd_err_val:.3f}" if not math.isnan(cmd_err_val) else "nan",
-            f"{tq:.3f}" if not math.isnan(tq) else "nan",
+            f"{math.degrees(act):.3f}" if math.isfinite(act) else "nan",
+            f"{err_val:.3f}" if math.isfinite(err_val) else "nan",
+            f"{cmd_err_val:.3f}" if math.isfinite(cmd_err_val) else "nan",
+            f"{tq:.3f}" if math.isfinite(tq) else "nan",
             f"{actual_kp:.3f}" if math.isfinite(actual_kp) else "nan",
             f"{actual_kd:.3f}" if math.isfinite(actual_kd) else "nan",
             f"{phase_scale:.3f}", f"{ff_nm:.3f}",

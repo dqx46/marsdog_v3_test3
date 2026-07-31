@@ -335,6 +335,8 @@ def parse_args():
                    help="[动力学] SRB-MPC 单步时间 s")
     p.add_argument("--wbc-tau-limit", type=float, default=_DYN.tau_limit_nm,
                    help="[动力学] WBC 关节力矩限幅 Nm")
+    p.add_argument("--wbc-tau-scale", type=float, default=_DYN.wbc_tau_scale,
+                   help="[动力学] WBC 关节力矩输出增益 (默认0.5, QP限幅后乘)")
     p.add_argument("--kp-base-z", type=float, default=_DYN.kp_base_z)
     p.add_argument("--kd-base-z", type=float, default=_DYN.kd_base_z)
     p.add_argument("--kp-base-roll", type=float, default=_DYN.kp_base_roll)

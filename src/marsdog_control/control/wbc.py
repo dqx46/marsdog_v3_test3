@@ -34,6 +34,8 @@ class WbcConfig:
     weight_force_tracking: float = 3.5
     weight_torque: float = 1e-3
     tau_limit_nm: float = 25.0
+    # Post-QP joint torque gain (1.0=full; <1 softens feedforward on real robot).
+    tau_scale: float = 0.5
     # Below this contact weight, enforce F≈0 hard (deep swing). Above: soft blend.
     soft_contact_eps: float = 0.05
 
@@ -243,10 +245,20 @@ class WholeBodyController:
         try:
             import warnings
 
+            # Prefer clarabel (sim parity); fall back to whatever qpsolvers has.
+            available = set(qpsolvers.available_solvers)
+            solver = next(
+                (s for s in ("clarabel", "osqp", "proxqp", "daqp", "scs") if s in available),
+                None,
+            )
+            if solver is None:
+                raise RuntimeError(
+                    f"no QP solver available (found: {sorted(available)})"
+                )
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 x_opt = qpsolvers.solve_qp(
-                    P, q_obj, G_ineq, h_ineq, A_eq, b_eq, solver="clarabel"
+                    P, q_obj, G_ineq, h_ineq, A_eq, b_eq, solver=solver
                 )
         except Exception as e:
             print("[WBC] QP Solver error:", e)
@@ -264,5 +276,6 @@ class WholeBodyController:
             -self.config.tau_limit_nm,
             self.config.tau_limit_nm,
         )
+        tau_opt = tau_opt * float(self.config.tau_scale)
         self._last_tau = tau_opt.copy()
         return tau_opt
