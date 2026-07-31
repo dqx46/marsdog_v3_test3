@@ -68,15 +68,16 @@ TARSUS_DAMPING = 1.0
 
 _FOOT_BODIES = ("fl_foot_link", "fr_foot_link", "rl_foot_link", "rr_foot_link")
 
-# 默认地面摩擦 (MuJoCo: slide torsion rolling)
-_DEFAULT_GROUND_FRICTION = (1.2, 0.8, 0.001)
+# None = 不覆盖, 沿用 MuJoCo geom 默认摩擦 (1, 0.005, 0.0001)
+_DEFAULT_GROUND_FRICTION: Optional[Tuple[float, float, float]] = None
 
 
 @dataclass(frozen=True)
 class SimPhysicsOptions:
     """仅仿真侧物理参数 — 不影响 walk.py 实机默认。"""
 
-    ground_friction: Tuple[float, float, float] = _DEFAULT_GROUND_FRICTION
+    # None = MuJoCo 默认摩擦; 显式传入才覆盖地面 geom
+    ground_friction: Optional[Tuple[float, float, float]] = _DEFAULT_GROUND_FRICTION
     foot_friction: Optional[Tuple[float, float, float]] = None
     # MuJoCo contact timeconst/dampratio — smaller timeconst = harder floor.
     foot_solref: Tuple[float, float] = (0.02, 1.0)
@@ -227,36 +228,59 @@ def _build_physics_mjcf(physics: Optional[SimPhysicsOptions] = None) -> str:
     option.set("iterations", "50")
     option.set("tolerance", "1e-8")
 
+    # MuJoCo 经典默认蓝场景 (skybox + 深蓝棋盘地板), 不做自定义高摩擦
+    visual = root.find("visual")
+    if visual is None:
+        visual = ET.SubElement(root, "visual")
+    rgba = visual.find("rgba")
+    if rgba is None:
+        rgba = ET.SubElement(visual, "rgba")
+    rgba.set("haze", "0.15 0.25 0.35 1")
+
     asset = root.find("asset")
     if asset is None:
         asset = ET.SubElement(root, "asset")
+    sky = ET.SubElement(asset, "texture")
+    sky.set("type", "skybox")
+    sky.set("builtin", "gradient")
+    sky.set("rgb1", "0.3 0.5 0.7")
+    sky.set("rgb2", "0 0 0")
+    sky.set("width", "512")
+    sky.set("height", "3072")
     tex = ET.SubElement(asset, "texture")
-    tex.set("name", "grid_tex")
+    tex.set("name", "texplane")
     tex.set("type", "2d")
     tex.set("builtin", "checker")
     tex.set("width", "512")
     tex.set("height", "512")
-    tex.set("rgb1", "0.75 0.80 0.75")
-    tex.set("rgb2", "0.55 0.60 0.55")
+    tex.set("rgb1", "0.2 0.3 0.4")
+    tex.set("rgb2", "0.1 0.15 0.2")
+    tex.set("mark", "cross")
+    tex.set("markrgb", "0.8 0.8 0.8")
     mat = ET.SubElement(asset, "material")
-    mat.set("name", "grid_mat")
-    mat.set("texture", "grid_tex")
-    mat.set("texrepeat", "10 10")
+    mat.set("name", "matplane")
+    mat.set("texture", "texplane")
+    mat.set("texrepeat", "1 1")
+    mat.set("texuniform", "true")
+    mat.set("reflectance", "0.3")
 
     worldbody = root.find("worldbody")
     gnd = ET.SubElement(worldbody, "geom")
     gnd.set("name", "ground")
     gnd.set("type", "plane")
-    gnd.set("size", "50 50 0.1")
-    gnd.set("material", "grid_mat")
-    gnd.set("friction", _friction_str(phys.ground_friction))
+    gnd.set("size", "0 0 0.125")
+    gnd.set("material", "matplane")
     gnd.set("condim", "3")
+    # 仅显式传入时才覆盖; 默认走 MuJoCo geom 摩擦 (1, 0.005, 0.0001)
+    if phys.ground_friction is not None:
+        gnd.set("friction", _friction_str(phys.ground_friction))
 
     lgt = ET.SubElement(worldbody, "light")
     lgt.set("directional", "true")
     lgt.set("diffuse", "0.8 0.8 0.8")
-    lgt.set("pos", "0 0 5")
-    lgt.set("dir", "0 0.3 -1")
+    lgt.set("specular", "0.3 0.3 0.3")
+    lgt.set("pos", "0 0 4")
+    lgt.set("dir", "0 0 -1")
 
     root_body = worldbody.find("body")
     if root_body is not None:
