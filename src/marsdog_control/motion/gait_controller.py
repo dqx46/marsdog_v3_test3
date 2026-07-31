@@ -1255,6 +1255,9 @@ class JumpController(StandController):
         land_compress: float = 0.012,
         push_vz: float = 0.55,
         push_extend: float = 0.020,
+        # Jump-only base-Z PD (do NOT write into global DynamicsConfig / Soft args).
+        kp_base_z: float = 80.0,
+        kd_base_z: float = 10.0,
         **_ignored,
     ):
         super().__init__(
@@ -1278,6 +1281,8 @@ class JumpController(StandController):
         self.land_compress = float(land_compress)
         self.push_vz = float(push_vz)
         self.push_extend = float(push_extend)
+        self.kp_base_z = float(kp_base_z)
+        self.kd_base_z = float(kd_base_z)
 
         self.phase = JumpPhase.IDLE
         self._phase_t0 = 0.0

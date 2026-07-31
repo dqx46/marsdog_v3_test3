@@ -3,6 +3,40 @@ import sys
 
 import os
 
+
+def _prefer_x11_for_mujoco_viewer() -> None:
+    """Avoid MuJoCo/GLFW Wayland HiDPI bug: scene stuck in a corner of a black window.
+
+    pip's ``glfw`` ships separate Wayland/X11 ``libglfw.so``. On this machine the
+    Wayland build reports monitor scale 2.0 while the framebuffer stays 1x, so
+    Simulate only fills ~1/4 of the window. Force the bundled X11 backend via
+    ``PYGLFW_LIBRARY`` (keeps ``WAYLAND_DISPLAY`` intact — clearing it breaks
+    Wayland-only GLFW and yields ``Failed to connect to display``).
+
+    Set ``MARDOG_ALLOW_WAYLAND=1`` to keep the default Wayland glfw.
+    """
+    if os.environ.get("MARDOG_ALLOW_WAYLAND") == "1":
+        return
+    if os.environ.get("PYGLFW_LIBRARY"):
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("glfw")
+        if spec is None or not spec.submodule_search_locations:
+            return
+        root = spec.submodule_search_locations[0]
+        x11_so = os.path.join(root, "x11", "libglfw.so")
+        if os.path.isfile(x11_so):
+            os.environ["PYGLFW_LIBRARY"] = x11_so
+            os.environ.setdefault("GDK_BACKEND", "x11")
+            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+    except Exception:
+        return
+
+
+# Must run before importing mujoco.viewer / glfw.
+_prefer_x11_for_mujoco_viewer()
+
 # 如果需要图形界面，需要确保在主线程
 try:
     if os.environ.get("NO_VIEWER") == "1":
@@ -123,9 +157,12 @@ def main():
     old_argv = sys.argv
     # 保留用户透传 flag。默认: natural_soft_trot；若用户要 WBC 则不再强塞 VMC。
     # --headless / --duration 仅仿真入口识别，不进 walk_cli
+    # 有窗口时默认一直跑到关窗；只有显式 --duration 才限时退出。
+    # 无头默认 5s，避免挂死。
     duration_s = 5.0
-    # 默认半杆前进；原地转: --vx 0 --turn 0.8
-    drive_vx = 0.55
+    duration_explicit = False
+    # 默认与真机 cruise_vx 对齐；原地转: --vx 0 --turn 0.8
+    drive_vx = 0.5
     drive_turn = 0.0
     filtered = []
     i = 1
@@ -134,6 +171,7 @@ def main():
         if a == "--duration" and i + 1 < len(old_argv):
             try:
                 duration_s = float(old_argv[i + 1])
+                duration_explicit = True
             except ValueError:
                 pass
             i += 2
@@ -141,6 +179,7 @@ def main():
         if a.startswith("--duration="):
             try:
                 duration_s = float(a.split("=", 1)[1])
+                duration_explicit = True
             except ValueError:
                 pass
             i += 1
@@ -254,6 +293,10 @@ def main():
     fsm = stack.fsm
     safety = stack.safety
     imu_ctrl = stack.imu_ctrl
+    # Sim CLI --vx 同时设为固定巡航油门（与真机摇杆开关语义一致）
+    from dataclasses import replace
+    fsm.drive = replace(fsm.drive, cruise_vx=max(0.0, min(1.0, abs(float(drive_vx)))))
+    print(f"[Sim] fixed cruise_vx={fsm.drive.cruise_vx:.2f} (stick depth ignored)")
 
     # 3. Backend（用 recipe 站高初始化，避免默认 0.22m 与 gait 不一致）
     # Jump: slightly harder foot contact so push force doesn't bury soft soles.
@@ -292,7 +335,11 @@ def main():
             cmd.request_mode = target
             print(f"[Sim] Auto-triggering {target.value} via UserCommand...")
         if fake_poll.tick > 200:
-            cmd.vx = drive_vx
+            # 模拟真机摇杆: 过阈值就顶满；实际摆幅/周期由 fsm.drive.cruise_vx 固定
+            if abs(drive_vx) > 1e-6:
+                cmd.vx = 1.0 if drive_vx > 0 else -1.0
+            else:
+                cmd.vx = 0.0
             cmd.turn = drive_turn
             cmd.has_stick = True
         fake_poll.tick += 1
@@ -333,9 +380,20 @@ def main():
     )
     
     keyboard.start()
+    if HAS_VIEWER and not is_headless:
+        gl = os.environ.get("PYGLFW_LIBRARY", "")
+        print(
+            "[Sim] viewer: using GLFW X11 backend"
+            + (f" ({os.path.basename(os.path.dirname(gl))}/libglfw.so)" if gl else "")
+            + " to avoid Wayland black-corner. Set MARDOG_ALLOW_WAYLAND=1 to override."
+        )
     print("[Sim] Running loop...")
     tick = 0
     last_wall = time.time()
+    wall0 = last_wall
+    sim0 = float(backend.sim_time)
+    last_rt_report = wall0
+    max_ticks = int(duration_s * 200)
     try:
         if HAS_VIEWER and not is_headless:
             # 与旧版 sim_walk 一致：控制 + 物理 + viewer 全在主线程，避免段错误
@@ -346,21 +404,38 @@ def main():
                         break
                     backend.step()
                     tick += 1
-                    pos = backend.base_pos
-                    viewer.cam.lookat[0] = pos[0]
-                    viewer.cam.lookat[1] = pos[1]
-                    viewer.cam.lookat[2] = 0.15
-                    viewer.sync()
-                    elapsed = time.time() - last_wall
+
+                    # 降低渲染频率到 50Hz (每 4 个控制周期渲染一次)
+                    # 否则 viewer.sync() 每次消耗太多时间，会导致仿真慢动作播放
+                    if tick % 4 == 0:
+                        pos = backend.base_pos
+                        viewer.cam.lookat[0] = pos[0]
+                        viewer.cam.lookat[1] = pos[1]
+                        viewer.cam.lookat[2] = 0.15
+                        viewer.sync()
+
+                    now_wall = time.time()
+                    elapsed = now_wall - last_wall
                     time.sleep(max(0.0, 0.005 - elapsed))
                     last_wall = time.time()
+                    if last_wall - last_rt_report >= 1.0:
+                        sim_elapsed = float(backend.sim_time) - sim0
+                        wall_elapsed = last_wall - wall0
+                        rt = sim_elapsed / max(1e-9, wall_elapsed)
+                        print(
+                            f"[Sim][RT] wall={wall_elapsed:.2f}s sim={sim_elapsed:.2f}s "
+                            f"realtime_factor={rt:.3f}x ticks={tick}"
+                        )
+                        last_rt_report = last_wall
+                    if duration_explicit and tick >= max_ticks:
+                        print(f"[Sim] duration reached ({duration_s:.1f}s sim), stopping viewer loop")
+                        break
         else:
             import math
             import numpy as np
 
             trq_peak = 0.0
             fz_peak = 0.0
-            max_ticks = int(duration_s * 200)
             report_ticks = {
                 max(1, max_ticks // 5),
                 max(1, 2 * max_ticks // 5),
@@ -402,8 +477,13 @@ def main():
                     pitches = list(ctx.executor.telemetry.get("pitch", []))
                     r_peak = max((abs(x) for x in rolls), default=0.0)
                     p_peak = max((abs(x) for x in pitches), default=0.0)
+                    wall_elapsed = time.time() - wall0
+                    sim_elapsed = float(backend.sim_time) - sim0
+                    rt = sim_elapsed / max(1e-9, wall_elapsed)
                     print(
                         f"[Sim] Test finished ({duration_s:.1f}s). "
+                        f"wall={wall_elapsed:.2f}s sim={sim_elapsed:.2f}s "
+                        f"realtime_factor={rt:.3f}x "
                         f"roll_peak={math.degrees(r_peak):.1f}deg "
                         f"pitch_peak={math.degrees(p_peak):.1f}deg "
                         f"z_end={backend.base_pos[2]:.3f} "

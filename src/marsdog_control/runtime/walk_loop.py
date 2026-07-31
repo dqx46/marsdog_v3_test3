@@ -373,6 +373,8 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         ctx.backend.send(output)
 
     # ── Log ──
+    # 注意：这里的 dt 是 sleep 之前的执行时间，用于记录计算耗时。
+    # 真正的周期时间（包含 sleep）在下一帧的 t_loop 计算。
     dt = clock.time() - t_loop
     ctx.recorder.maybe_record(
         mode=mode, lz=ctx.lz, evo=ctx.evo, dm=ctx.dm, incos=ctx.incos,

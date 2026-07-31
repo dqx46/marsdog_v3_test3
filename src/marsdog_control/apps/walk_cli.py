@@ -65,6 +65,9 @@ def parse_args():
     p.add_argument("--cruise-turn-scale", type=float, default=GAIT.cruise_turn_scale,
                    help="[走+转] 边走边转时的转向权限缩放(相对原地转), 越大转得越急, "
                         "默认0.6; 原地转(只右摇杆)不受影响")
+    p.add_argument("--cruise-vx", type=float, default=0.5,
+                   help="[前进] 摇杆只做走/停开关: 一旦过起步阈值, 固定用该巡航油门 "
+                        "(与仿真 --vx 对齐, 默认 0.5); 推杆深浅不再改变摆幅/周期")
     p.add_argument("--cruise-turn-yamp", type=float, default=GAIT.cruise_turn_yamp,
                    help="[走+转] 边走边转的横向跨步(蟹步)增益, hip改线修正后蟹步与差速同向"
                         "帮助转向, 默认1.0; 若仍斜行可降到0试纯差速")

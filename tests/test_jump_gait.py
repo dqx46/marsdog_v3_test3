@@ -117,13 +117,48 @@ def test_jump_recipe_isolation_from_soft_and_walk():
         body_height=jump["height"],
         crouch_depth=jump["crouch_depth"],
         push_vz=jump["push_vz"],
+        kp_base_z=jump["kp_base_z"],
+        kd_base_z=jump["kd_base_z"],
     )
     assert abs(j.crouch_depth - 0.099) < 1e-9
     assert abs(j.push_vz - 1.23) < 1e-9
+    assert abs(j.kp_base_z - JUMP_WBC["kp_base_z"]) < 1e-9
+    assert abs(j.kd_base_z - JUMP_WBC["kd_base_z"]) < 1e-9
     assert NATURAL_SOFT_TROT_WBC == soft_before
     assert NATURAL_WALK_WBC == walk_before
     assert JUMP_REAL["crouch_depth"] != 0.099
     assert JUMP_WBC["crouch_depth"] != 0.099
+
+
+def test_jump_wbc_gains_wired_from_recipe_not_global_dynamics():
+    """JUMP_* kp_base_z lives on JumpController; Soft DynamicsConfig stays default."""
+    from marsdog_control.config.schema import DynamicsConfig
+    from marsdog_control.motion.gait_recipes import build_controller_set
+    from marsdog_control.apps.walk_cli import parse_args
+    import sys
+
+    assert abs(DynamicsConfig().kp_base_z - 30.0) < 1e-9  # Soft/global default
+
+    old = sys.argv
+    sys.argv = ["walk", "--natural-soft-trot", "--jump", "--wbc", "--no-vmc"]
+    try:
+        args = parse_args()
+    finally:
+        sys.argv = old
+
+    ctrls = build_controller_set(
+        args,
+        front_x0=0.17,
+        rear_x0=-0.17,
+        jump_params=dict(JUMP_WBC),
+        natural_params=dict(NATURAL_SOFT_TROT_WBC),
+        apply_turn=False,
+    )
+    assert abs(ctrls.jump_fwd.kp_base_z - JUMP_WBC["kp_base_z"]) < 1e-9
+    assert abs(ctrls.jump_fwd.kd_base_z - JUMP_WBC["kd_base_z"]) < 1e-9
+    assert getattr(ctrls.nat_fwd, "family", None) != "jump"
+    # Global DynamicsConfig unchanged (Jump must not apply_preset).
+    assert abs(DynamicsConfig().kp_base_z - 30.0) < 1e-9
 
 
 def test_walk_and_soft_schedules_still_green():

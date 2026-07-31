@@ -847,6 +847,10 @@ class CommandExecutor:
             base_acc_des[1] = -float(cfg.lateral_vel_damp) * vy_for_damp
         # Jump: track z_ref + desired_vz; Soft/Walk keep original damping on vz.
         if jump_now:
+            # Jump-only Z gains from JumpController (recipe JUMP_*), never mutate
+            # global DynamicsConfig so SoftTrot keeps schema/CLI kp_base_z.
+            kp_z = float(getattr(active_gait, "kp_base_z", cfg.kp_base_z))
+            kd_z = float(getattr(active_gait, "kd_base_z", cfg.kd_base_z))
             # During jump, position tracking can fight velocity tracking if the robot
             # didn't crouch deep enough. We prioritize velocity tracking.
             z_err = target_z - current_base_z
@@ -860,9 +864,9 @@ class CommandExecutor:
                     vz_truth if abs(vz_truth) > abs(float(v_pin[2])) else float(v_pin[2])
                 )
                 # Strong upward vz track; never brake a rising hop (cmd lag → dig).
-                vz_term = -2.0 * cfg.kd_base_z * (vz_use - vz_cmd)
+                vz_term = -2.0 * kd_z * (vz_use - vz_cmd)
                 vz_term = max(0.0, float(vz_term))
-                base_acc_des[2] = 0.20 * cfg.kp_base_z * z_err + vz_term
+                base_acc_des[2] = 0.20 * kp_z * z_err + vz_term
             elif phase_name in ("land", "recover"):
                 # Soft absorb: never bounce by over-braking a downward vz.
                 stand_h = float(getattr(active_gait, "stand_height", 0.24))
@@ -871,19 +875,19 @@ class CommandExecutor:
                 if z_to_stand > 0.0:
                     # Below stand — rise gently; don't fight the fall hard.
                     base_acc_des[2] = (
-                        0.20 * cfg.kp_base_z * z_to_stand
-                        - 0.40 * cfg.kd_base_z * vz
+                        0.20 * kp_z * z_to_stand
+                        - 0.40 * kd_z * vz
                     )
                 else:
                     # Above stand — pull down / brake upward bounce.
                     base_acc_des[2] = (
-                        0.90 * cfg.kp_base_z * z_to_stand
-                        - 2.5 * cfg.kd_base_z * max(0.0, vz)
+                        0.90 * kp_z * z_to_stand
+                        - 2.5 * kd_z * max(0.0, vz)
                     )
             else:
                 base_acc_des[2] = (
-                    cfg.kp_base_z * z_err
-                    - cfg.kd_base_z * (v_pin[2] - vz_cmd)
+                    kp_z * z_err
+                    - kd_z * (v_pin[2] - vz_cmd)
                 )
             # Kill nose-up so front doesn't peel/plant while rear clears.
             # Slight nose-down bias during push loads the rear feet.

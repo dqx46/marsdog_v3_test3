@@ -397,6 +397,8 @@ def build_controller_set(
         land_compress=float(jp.get("land_compress", 0.012)),
         push_vz=float(jp.get("push_vz", 0.55)),
         push_extend=float(jp.get("push_extend", 0.020)),
+        kp_base_z=float(jp.get("kp_base_z", 80.0)),
+        kd_base_z=float(jp.get("kd_base_z", 10.0)),
     )
 
     for controller in (fwd, bwd, pace_fwd, pace_bwd, nat_fwd, walk_fwd, jump_fwd):
@@ -749,6 +751,8 @@ NATURAL_WALK_WBC = {
 }
 
 # 原地 hop — 与 SoftTrot/Walk/Spot 完全解耦；只改本 dict。
+# kp/kd_base_z 挂在 JumpController 上，executor 仅 jump_now 时读取；
+# 绝不 apply_preset 进全局 DynamicsConfig（避免 Soft 被 Jump 增益盖写）。
 JUMP_REAL = {
     "height": 0.24,
     "crouch_depth": 0.050,
@@ -763,6 +767,7 @@ JUMP_REAL = {
     "push_extend": 0.022,
     "front_stand_foot_pitch_deg": -90.0,
     "kp_base_z": 80.0,
+    "kd_base_z": 10.0,
 }
 
 # WBC 仿真 — 稳的一版：单次腾空优先，不过度加后腿力
@@ -779,6 +784,7 @@ JUMP_WBC = {
     "push_vz": 2.2,
     "push_extend": 0.016,
     "kp_base_z": 140.0,
+    "kd_base_z": 12.0,
 }
 
 

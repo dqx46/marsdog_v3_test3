@@ -28,6 +28,9 @@ class FsmDriveConfig:
     gp_trot_threshold: float = 0.15
     gp_deadzone: float = 0.12
     throttle_min_scale: float = 0.5
+    # Stick is on/off only: once |vx| > engage, schedule uses this fixed cruise
+    # (matches sim default ``--vx 0.5``). Stick depth does not scale amp/period.
+    cruise_vx: float = 0.5
     yaw_hold: bool = False
     yaw_hold_kp: float = 0.0
     yaw_hold_kd: float = 0.0
@@ -56,6 +59,7 @@ class FsmDriveConfig:
                 0.12 if gp_deadzone is None else float(gp_deadzone)),
             throttle_min_scale=float(_g(
                 args, "throttle_min_scale", GAIT.throttle_min_scale)),
+            cruise_vx=float(_g(args, "cruise_vx", 0.5)),
             yaw_hold=bool(_g(args, "yaw_hold", False)),
             yaw_hold_kp=float(_g(args, "yaw_hold_kp", 0.0)),
             yaw_hold_kd=float(_g(args, "yaw_hold_kd", 0.0)),

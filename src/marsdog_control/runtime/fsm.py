@@ -340,6 +340,18 @@ class RuntimeStateMachine:
                 self.request_transition(RobotMode.STAND, targets_now=last_targets,
                                         blend_time=0.6)
 
+    def _stick_cruise_vx(self, stick_vx: float) -> float:
+        """Map stick deflection → fixed cruise command (sign only from stick).
+
+        Real/sim gamepad is engage-only: any |vx| above threshold uses
+        ``drive.cruise_vx`` (default 0.5 = sim ``--vx 0.5``). Stick depth
+        must not change SoftTrot amp/period.
+        """
+        cruise = max(0.0, min(1.0, float(self.drive.cruise_vx)))
+        if stick_vx == 0.0:
+            return 0.0
+        return math.copysign(cruise, stick_vx)
+
     def _apply_stick_drive(self, state: RobotState, cmd: UserCommand, last_targets):
         a = self.drive
         vx = cmd.vx
@@ -357,36 +369,37 @@ class RuntimeStateMachine:
                                         targets_now=last_targets, blend_time=0.4)
             return
 
-        # 2b) 推杆前进/后退 -> 进入 walk_mode
+        # 2b) 推杆前进/后退 -> 进入 walk_mode（深度忽略，固定 cruise_vx）
         if has_walk:
-            self.throttle = vx
+            cruise_vx = self._stick_cruise_vx(vx)
+            self.throttle = cruise_vx
             if self.walk_mode is RobotMode.JUMP:
                 if self.mode is not RobotMode.JUMP:
                     b_time = 0.05  # Fast blend for jump to avoid suppressing it
                     self.request_transition(RobotMode.JUMP, Direction.FWD,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_jump_throttle(vx)
+                self._apply_jump_throttle(cruise_vx)
             elif self.walk_mode is RobotMode.WALK:
                 new_dir = Direction.FWD if vx > 0 else Direction.BWD
                 if self.mode is not RobotMode.WALK or self.direction is not new_dir:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.WALK, new_dir,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_walk_throttle(vx)
+                self._apply_walk_throttle(cruise_vx)
             elif self.walk_mode is RobotMode.NATURAL:
                 new_dir = Direction.FWD if vx > 0 else Direction.BWD
                 if self.mode is not RobotMode.NATURAL or self.direction is not new_dir:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.NATURAL, new_dir,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_natural_throttle(state, vx, rx)
+                self._apply_natural_throttle(state, cruise_vx, rx)
             else:
                 new_dir = Direction.FWD if vx > 0 else Direction.BWD
                 if self.mode is not RobotMode.TROT or self.direction is not new_dir:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.TROT, new_dir,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_trot_throttle(state, vx, rx)
+                self._apply_trot_throttle(state, cruise_vx, rx)
             return
 
         # 2c) 只有转向摇杆 = 原地转（Walk/Jump v1 不接管；保持站立，请切 SoftTrot）

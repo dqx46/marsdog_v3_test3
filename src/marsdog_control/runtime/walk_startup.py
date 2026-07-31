@@ -226,7 +226,9 @@ def prepare_walk_startup(
         print(
             f"[jump] Jump 预设: crouch={jump_params['crouch_depth']*1000:.0f}mm "
             f"push={jump_params['push_s']:.2f}s flight={jump_params['flight_s']:.2f}s "
-            f"push_vz={jump_params['push_vz']:.2f}m/s"
+            f"push_vz={jump_params['push_vz']:.2f}m/s "
+            f"kp_z={jump_params.get('kp_base_z', 80.0):.0f} "
+            f"(力控增益挂 JumpController, 不灌 Soft args)"
         )
 
     # Preset may mutate args; bootstrap after preset so RuntimeConfig sees final values.
