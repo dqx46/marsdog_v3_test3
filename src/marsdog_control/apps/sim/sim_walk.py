@@ -414,9 +414,12 @@ def main():
                         viewer.cam.lookat[2] = 0.15
                         viewer.sync()
 
+                    # 使用绝对时间追踪，把 viewer.sync 欠下的时间在后续帧追回来
+                    target_wall = wall0 + (float(backend.sim_time) - sim0)
                     now_wall = time.time()
-                    elapsed = now_wall - last_wall
-                    time.sleep(max(0.0, 0.005 - elapsed))
+                    sleep_t = target_wall - now_wall
+                    if sleep_t > 0:
+                        time.sleep(sleep_t)
                     last_wall = time.time()
                     if last_wall - last_rt_report >= 1.0:
                         sim_elapsed = float(backend.sim_time) - sim0
