@@ -267,7 +267,8 @@ def parse_args():
     p.add_argument("--ff-decouple", action="store_true",
                    help="[P2] 启用 expected_roll/pitch 前馈解耦(相位修正后从实测扣除)")
     p.add_argument("--leg-kp-scale", type=float, default=CLI.leg_kp_scale,
-                   help="[P3] 腿部电机 kp 统一缩放，正式 NaturalSoftTrot 默认0.65; <1 增加柔顺吸震")
+                   help="[临时] kp 叠加缩放(默认1.0)。SoftTrot 请改 config/gains.py 分品牌表，"
+                        "勿再用本参数做全局软化；跳步阶段仍可能临时改写")
     p.add_argument("--x-shift",     type=float, default=GAIT.x_shift,
                    help="四脚落脚点整体X偏移(m); 正值=脚向前, 等效重心后移 (默认0)")
     # ── A: 线性油门 → 步幅缩放 ──

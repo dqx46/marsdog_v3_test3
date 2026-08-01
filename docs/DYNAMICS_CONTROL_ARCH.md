@@ -71,7 +71,7 @@ DynamicsTelemetry → ring buffers
 动力学接管程度（仿真）：
 - 支撑力 / 摆动足加速度 / 基座 PD：WBC `trq_ff`
 - 足端几何与相位：运动学 gait（`q`）
-- 关节 MIT kp：WBC 下 `leg_kp_scale≈0.65`，让 τ_ff 更主导
+- 关节 MIT kp：按品牌写在 `config/gains.py`（`JOINT_GAINS` + `BRAND_GAIN_SCALE`）；`leg_kp_scale` 默认 1.0，仅跳步等临时叠加
 
 实机契约：`RobotState.joint_vel` 由 Backend 填 URDF 空间速度；`vel_xyz` 由估计器填（不依赖仿真真值）。
 WBC 优先读 `gait.vel_cmd`（由 SoftTrotSchedule 写入），不再只靠 amp/period 反推。

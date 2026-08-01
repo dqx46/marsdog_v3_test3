@@ -31,7 +31,11 @@ python3 tests/Motor_test/bench_motor_track.py step --ids 4,8 --deg 3 --kp 40 --s
 
 # 正弦（因克斯 3/7 跟随 / PID）
 python3 tests/Motor_test/bench_motor_track.py sine --ids 3,7 --amp-deg 5 --period 2 \
-  --kp 50 --kd 1 --hz 200 --sec 10
+  --kp 50 --kd 2.5 --hz 200 --sec 10
+
+# 前腿四个因克斯 2/3/6/7 网格扫频（须吊起；对照 ENCOS 力位混控 KP≤500 KD≤5）
+./run_with_env.sh python tests/Motor_test/sweep_incos_front.py \
+  --kp 15,25,35,45 --kd 0.8,1.5,2.5 --amp-deg 3 --sec 5
 ```
 
 日志默认：`tests/Motor_test/log/bench_motor_{mode}_{ts}.csv`

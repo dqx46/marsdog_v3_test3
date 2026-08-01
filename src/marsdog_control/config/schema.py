@@ -67,7 +67,9 @@ class GaitConfig:
 
 @dataclass(frozen=True)
 class ControlConfig:
-    leg_kp_scale: float = 0.65
+    # Default 1.0: brand-native JOINT_GAINS / BRAND_GAIN_SCALE own softening.
+    # Non-1 values are temporary overlays (jump phases), not SoftTrot global soft.
+    leg_kp_scale: float = 1.0
     kp_scale: float = 1.0
     td_kp_scale: float = 0.4
     swing_kp_scale: float = 0.7

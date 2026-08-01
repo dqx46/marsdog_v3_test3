@@ -103,15 +103,14 @@ def runtime_config_from_args(args: Namespace) -> RuntimeConfig:
     )
 
     if features.wbc_enabled:
-        # 跟踪与稳姿折中：0.75 半杆 roll ptp~11°；0.70 保留部分 q_err 改善
+        # Softening lives in config/gains.py (brand-native). Do not force a
+        # global leg_kp_scale across LZ/EVO/Incos — MIT units differ by brand.
         control = replace(
             control,
-            leg_kp_scale=0.70,
             td_kp_scale=max(control.td_kp_scale, 0.35),
             swing_kp_scale=max(control.swing_kp_scale, 0.85),
         )
-    elif features.vmc_enabled:
-        control = replace(control, leg_kp_scale=0.5)
+    # vmc: previously forced leg_kp_scale=0.5; now tune JOINT_GAINS / BRAND_GAIN_SCALE
 
     from marsdog_control.config.schema import DynamicsConfig
     _D_dyn = DynamicsConfig()

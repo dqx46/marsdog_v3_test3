@@ -78,17 +78,48 @@ def resolve_gains(
     joint_gains,
     phase_scale=1.0,
     trq_override=None,
+    brand_gain_scale=None,
+    kp_incos=None,
+    kd_incos=None,
 ):
-    """解析单个关节最终的 (kp, kd, trq) — 电机端量纲。"""
-    leg_s = leg_kp_scale if _is_leg_joint(j.name) else 1.0
-    leg_s *= phase_scale
+    """解析单个关节最终的 (kp, kd, trq) — 各品牌 MIT 原生量纲。
+
+    Softening is per-``mtype`` via ``BRAND_GAIN_SCALE`` (or ``brand_gain_scale``).
+    ``leg_kp_scale`` is only a temporary overlay (jump / spot), default 1.0 —
+    it must not be used as a global SoftTrot softener across brands.
+    """
+    from marsdog_control.config.gains import (
+        BRAND_DEFAULT_GAINS,
+        BRAND_GAIN_SCALE,
+        brand_scales,
+    )
+
+    b = brand_scales(j.mtype, brand_gain_scale or BRAND_GAIN_SCALE)
+    # Jump/spot may pass leg_kp_scale != 1 on leg joints; SoftTrot keeps 1.0.
+    leg_overlay = float(leg_kp_scale) if _is_leg_joint(j.name) else 1.0
+    kp_mult = float(kp_scale) * float(b["kp"]) * float(phase_scale) * leg_overlay
+    kd_mult = float(b["kd"])
     if use_joint_gains:
         g = joint_gains.get(j.name, {"kp": 30.0, "kd": 4.0, "trq_ff": 0.0})
         trq = g["trq_ff"] if trq_override is None else trq_override
-        return g["kp"] * kp_scale * leg_s, g["kd"], trq
-    kp = (kp_lz if j.mtype == "lz" else kp_evo) * kp_scale * leg_s
-    kd = kd_lz if j.mtype == "lz" else kd_evo
-    return kp, kd, (0.0 if trq_override is None else trq_override)
+        return g["kp"] * kp_mult, g["kd"] * kd_mult, trq
+
+    if j.mtype == "lz":
+        base_kp, base_kd = float(kp_lz), float(kd_lz)
+    elif j.mtype == "evo":
+        base_kp, base_kd = float(kp_evo), float(kd_evo)
+    elif j.mtype == "incos":
+        # No separate CLI channel; soft_disable ramps kp_evo/kd_evo for all MIT.
+        d = BRAND_DEFAULT_GAINS["incos"]
+        base_kp = float(
+            kp_incos if kp_incos is not None else (kp_evo if kp_evo else d["kp"]))
+        base_kd = float(
+            kd_incos if kd_incos is not None else (kd_evo if kd_evo else d["kd"]))
+    else:
+        d = BRAND_DEFAULT_GAINS.get(j.mtype, {"kp": 30.0, "kd": 4.0})
+        base_kp, base_kd = float(d["kp"]), float(d["kd"])
+    return base_kp * kp_mult, base_kd * kd_mult, (
+        0.0 if trq_override is None else trq_override)
 
 
 @dataclass

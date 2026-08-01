@@ -46,7 +46,7 @@ _SCHEMA_DEFAULTS = [
     ("gait", "fade_s", 3.0),
     ("gait", "natural_trot_enabled", True),
     ("gait", "natural_soft_trot_enabled", True),
-    ("control", "leg_kp_scale", 0.65),
+    ("control", "leg_kp_scale", 1.0),
     ("control", "td_kp_scale", 0.4),
     ("control", "swing_kp_scale", 0.7),
     ("control", "td_window_s", 0.15),

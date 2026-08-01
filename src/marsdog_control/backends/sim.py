@@ -622,14 +622,10 @@ class SimRobotBackend(RobotBackend):
             ps = kp_phase.get(mid, 1.0)
             to = trq_ff.get(mid)
 
-            g = JOINT_GAINS.get(j.name, DEFAULT_GAIN)
-            is_leg = j.name[:3] in ("fl_", "fr_", "rl_", "rr_")
-            # 与实机 resolve_gains 一致: kp *= kp_scale * leg_kp_scale * phase
-            leg_s = (leg_kp_scale if is_leg else 1.0) * ps
-
-            kp = g["kp"] * kp_scale * leg_s
-            kd = g["kd"]
-            trq = to if to is not None else g.get("trq_ff", 0.0)
+            from marsdog_control.control.executor import resolve_gains
+            kp, kd, trq = resolve_gains(
+                j, kp_scale, True, 0.0, 0.0, 0.0, 0.0,
+                leg_kp_scale, JOINT_GAINS, ps, to)
 
             self.model.actuator_gainprm[aid, 0] = kp
             if self.model.actuator_gainprm.shape[1] > 1:

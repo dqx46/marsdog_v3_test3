@@ -169,6 +169,8 @@ class MotorIncos:
                 with self._cmd_lock:
                     cmds = list(self._last_cmd.items())
                 if cmds:
+                    # Same descending-ID bulk order as mit_controls (see there).
+                    cmds = sorted(cmds, key=lambda item: int(item[0]), reverse=True)
                     frames = [(self._encode_mit(kp, kd, q, dq, tau), 8, mid)
                               for mid, (q, dq, kp, kd, tau) in cmds]
                     with self._lock:
@@ -213,16 +215,18 @@ class MotorIncos:
         return ok
 
     def mit_controls(self, motor_ids, positions, velocities, kps, kds, torques):
-        frames = []
-        for mid, q, dq, kp, kd, tau in zip(motor_ids, positions, velocities,
-                                           kps, kds, torques):
-            frames.append((self._encode_mit(kp, kd, q, dq, tau), 8, mid))
+        # USB-CAN + 4 轴同拍 bulk：按 JOINT_MAP 升序 (2,3,6,7) 连发时，线上
+        # raw 回包会系统性丢掉中间 ID（实测 ID6 rx/tx≈0.17；单独控 ID6=1.0）。
+        # 降序 (7,6,3,2) 四轴均≈1.0。根因在总线/适配器 RX，不是电机坏。
+        packed = list(zip(motor_ids, positions, velocities, kps, kds, torques))
+        packed.sort(key=lambda row: int(row[0]), reverse=True)
+        frames = [(self._encode_mit(kp, kd, q, dq, tau), 8, mid)
+                  for mid, q, dq, kp, kd, tau in packed]
         with self._lock:
             ok = self._serial.send_bulk(frames)
         if ok:
             self._last_tx_monotonic = time.monotonic()
-            for mid, q, dq, kp, kd, tau in zip(motor_ids, positions, velocities,
-                                               kps, kds, torques):
+            for mid, q, dq, kp, kd, tau in packed:
                 if 1 <= mid <= MAX_ID:
                     self.is_enabled[mid - 1] = kp > 0.0 or kd > 0.0
                     self.tx_count[mid - 1] += 1

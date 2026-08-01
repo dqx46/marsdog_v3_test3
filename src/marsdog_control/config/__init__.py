@@ -7,7 +7,11 @@ from marsdog_control.config.bootstrap import (
 from marsdog_control.config.devices import DeviceConfig, get_device_config
 from marsdog_control.config.defaults import CLI, default_runtime_config, cli_defaults_from_schema
 from marsdog_control.config.gait_tuning import GAIT, GaitCliDefaults, print_tuning_banner
-from marsdog_control.config.gains import JOINT_GAINS
+from marsdog_control.config.gains import (
+    BRAND_DEFAULT_GAINS,
+    BRAND_GAIN_SCALE,
+    JOINT_GAINS,
+)
 from marsdog_control.config.legacy_bridge import apply_runtime_config_to_legacy_args
 from marsdog_control.config.loader import runtime_config_from_args
 from marsdog_control.config.report import (
@@ -46,6 +50,8 @@ __all__ = [
     "GaitConfig",
     "HardwareConfig",
     "ImuConfig",
+    "BRAND_DEFAULT_GAINS",
+    "BRAND_GAIN_SCALE",
     "JOINT_GAINS",
     "LoggingConfig",
     "RuntimeConfig",

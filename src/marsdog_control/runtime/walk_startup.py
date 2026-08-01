@@ -300,8 +300,24 @@ def prepare_walk_startup(
         vmc_enabled=features.vmc_enabled,
         wbc_enabled=features.wbc_enabled,
     )
+    from marsdog_control.config.gains import BRAND_GAIN_SCALE, JOINT_GAINS
+    print(
+        "[gains] brand scales "
+        + ", ".join(
+            f"{m}=kp×{s['kp']:.2f}/kd×{s['kd']:.2f}"
+            for m, s in BRAND_GAIN_SCALE.items()
+        )
+    )
+    fc, rc = JOINT_GAINS.get("fl_calf", {}), JOINT_GAINS.get("fr_calf", {})
+    print(
+        f"[gains] Incos calf L/R = "
+        f"{fc.get('kp', float('nan')):.0f}/{fc.get('kd', float('nan')):.1f} | "
+        f"{rc.get('kp', float('nan')):.0f}/{rc.get('kd', float('nan')):.1f} "
+        f"(leg_kp_scale overlay={runtime_state.leg_kp_scale:.2f})"
+    )
     if abs(runtime_state.leg_kp_scale - 1.0) > 1e-6:
-        print(f"[P3] 腿部电机 kp 缩放 = {runtime_state.leg_kp_scale:.2f}")
+        print(f"[P3] 临时 leg_kp_scale 叠加 = {runtime_state.leg_kp_scale:.2f} "
+              f"(非品牌专属增益)")
     if runtime_state.impedance.enabled:
         print(f"[柔顺A] 相位可变阻抗开启: 触地kp={runtime_state.impedance.td_kp_scale:.2f} "
               f"摆动kp={runtime_state.impedance.swing_kp_scale:.2f} "
