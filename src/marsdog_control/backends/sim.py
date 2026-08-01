@@ -36,11 +36,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 URDF_PATH = os.path.normpath(
     os.path.join(_HERE, "..", "..", "..", "marsdog", "urdf", "marsdog.urdf")
 )
-# Prefer repo-local meshes (next to urdf/); fall back to common checkouts.
+# Prefer repo-local meshes (next to urdf/); then sibling checkout ../meshes.
 _MESH_CANDIDATES = (
     os.path.normpath(os.path.join(_HERE, "..", "..", "..", "marsdog", "meshes")),
-    "/home/elephant/zeping/marsdogv3_test1/marsdog/meshes",
-    "/home/elephant/zeping/meshes",
+    os.path.normpath(os.path.join(_HERE, "..", "..", "..", "..", "meshes")),
 )
 MESH_DIR = next((p for p in _MESH_CANDIDATES if os.path.isdir(p)), _MESH_CANDIDATES[0])
 
