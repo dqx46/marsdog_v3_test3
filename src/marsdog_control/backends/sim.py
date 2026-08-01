@@ -36,7 +36,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 URDF_PATH = os.path.normpath(
     os.path.join(_HERE, "..", "..", "..", "marsdog", "urdf", "marsdog.urdf")
 )
-MESH_DIR = "/home/z/robotics/robot_lab/source/robot_lab/data/Robots/marsdog/meshes"
+# Prefer repo-local meshes (next to urdf/); fall back to common checkouts.
+_MESH_CANDIDATES = (
+    os.path.normpath(os.path.join(_HERE, "..", "..", "..", "marsdog", "meshes")),
+    "/home/elephant/zeping/marsdogv3_test1/marsdog/meshes",
+    "/home/elephant/zeping/meshes",
+)
+MESH_DIR = next((p for p in _MESH_CANDIDATES if os.path.isdir(p)), _MESH_CANDIDATES[0])
 
 MIMIC_JOINTS = (
     ("rl_tarsus_joint", "rl_calf_joint", -1.0),
