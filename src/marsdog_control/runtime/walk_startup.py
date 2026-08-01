@@ -205,6 +205,9 @@ def prepare_walk_startup(
         overridden = apply_preset_preserving_cli(args, natural_params)
         if overridden:
             print("[nat] 显式 CLI 覆盖预设: " + ", ".join(overridden))
+        T = float(getattr(args, "nat_period", natural_params.get("period", 0.87)))
+        if T > 1e-6:
+            print(f"[cadence] SoftTrot T={T:.3f}s  f={1.0 / T:.2f} Hz")
 
     walk_params = dict(
         NATURAL_WALK_WBC if bool(getattr(args, "wbc", False)) else NATURAL_WALK_REAL

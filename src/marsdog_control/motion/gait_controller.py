@@ -1053,6 +1053,8 @@ class NaturalSoftTrot(NaturalTrot):
     """
 
     _PHASE_OFFSET = {'fl': 0.00, 'rr': 0.06, 'fr': 0.50, 'rl': 0.56}
+    # 支撑相两端门控：0.12 偏“顿”，0.06 偏“震”；0.10 折中
+    _STANCE_TAPER = 0.10
 
     def __init__(self, *args,
                  touchdown_compress: float = 0.004,

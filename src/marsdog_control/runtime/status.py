@@ -75,13 +75,14 @@ class RuntimeStatusDisplay:
             if isinstance(vel, (tuple, list)) and len(vel) >= 1:
                 v_str = f"  v={float(vel[0]):+.3f}m/s"
             st = float(getattr(active_gait, "stance_ratio", 0.0))
-            sh = float(getattr(active_gait, "step_height", 0.0))
+            sh_r = float(getattr(active_gait, "step_height", 0.0))
+            sh_f = float(getattr(active_gait, "step_height_front", sh_r) or sh_r)
             sys.stdout.write(
                 f"\r  [{tag}]  h={height:.3f}m  T={active_gait.period:.2f}s  "
                 f"st={st:.0%}  "
                 f"amp=±{abs(active_gait.amp_front)*100:.1f}/"
                 f"{abs(active_gait.amp_rear)*100:.1f}cm  "
-                f"lift={sh*100:.1f}cm"
+                f"lift={sh_f*100:.1f}/{sh_r*100:.1f}cm"
                 f"{v_str}  input_vx={cmd.vx:+.2f}      "
             )
         elif joint_direction_test:

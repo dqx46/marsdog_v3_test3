@@ -30,7 +30,17 @@ def parse_args():
     p.add_argument("--height",      type=float, default=CLI.height,
                    help="体高(m), 默认0.24=新站姿/NaturalSoftTrot 基准(唯一站姿), 方向测试同此")
     p.add_argument("--period",      type=float, default=CLI.period,
-                   help="Trot 周期 (s), 默认 0.75")
+                   help="StableTrot 周期 (s), 默认 0.75; SoftTrot 请优先用 --gait-period/--gait-hz")
+    p.add_argument(
+        "--gait-period", type=float, default=None, metavar="SEC",
+        help="[步频·推荐] SoftTrot/Natural 步态周期(秒); 同时写入 period 与 nat_period 并覆盖预设。"
+             "例: --gait-period 1.0。内部全链路用秒，优先用本参数",
+    )
+    p.add_argument(
+        "--gait-hz", type=float, default=None, metavar="HZ",
+        help="[步频·别名] SoftTrot/Natural 步频(Hz); 仅换算为 period=1/HZ，与 --gait-period 二选一。"
+             "例: --gait-hz 1.15",
+    )
     p.add_argument("--step-h",      type=float, default=CLI.step_h,
                    help="后腿抬腿高度 (m), 默认 2cm")
     p.add_argument("--step-h-front", type=float, default=None,
@@ -216,7 +226,8 @@ def parse_args():
     p.add_argument("--trot-preview", action="store_true",
                    help="应用 MuJoCo sim-preview --trot 验证配方 (步态+IMU; 保留实机柔顺/重力补偿/auto-trim)")
     # ── NaturalTrot/NaturalSoftTrot 专用形状参数 (未给时用 gait_recipes 的 REAL 预设覆盖) ──
-    p.add_argument("--nat-period", type=float, default=GAIT.nat_period)
+    p.add_argument("--nat-period", type=float, default=GAIT.nat_period,
+                   help="Natural/SoftTrot 周期 (s); SoftTrot 推荐改用 --gait-period/--gait-hz")
     p.add_argument("--nat-amp-front", type=float, default=GAIT.nat_amp_front)
     p.add_argument("--nat-amp-rear", type=float, default=GAIT.nat_amp_rear)
     p.add_argument("--nat-step-h", type=float, default=GAIT.nat_step_h)
@@ -363,8 +374,13 @@ def parse_args():
                 explicit_dests.add(action.dest)
     args = p.parse_args()
     args._explicit_cli = explicit_dests
+    apply_gait_cadence_cli(args)
     if args.trot_preview:
-        explicit_values = {key: getattr(args, key) for key in explicit_dests}
+        explicit_values = {
+            key: getattr(args, key)
+            for key in getattr(args, "_explicit_cli", set())
+            if hasattr(args, key)
+        }
         apply_trot_preview_real(args)
         for key, value in explicit_values.items():
             setattr(args, key, value)
@@ -373,8 +389,49 @@ def parse_args():
     return args
 
 
+def apply_gait_cadence_cli(args):
+    """Resolve ``--gait-period`` / ``--gait-hz`` into ``period`` + ``nat_period``.
+
+    Marks both as explicit so SoftTrot presets cannot overwrite them.
+    Returns the resolved period in seconds, or ``None`` if unused.
+    """
+    explicit = set(getattr(args, "_explicit_cli", set()))
+    has_period = "gait_period" in explicit and getattr(args, "gait_period", None) is not None
+    has_hz = "gait_hz" in explicit and getattr(args, "gait_hz", None) is not None
+    if has_period and has_hz:
+        raise SystemExit("请只使用 --gait-period 或 --gait-hz 之一")
+
+    period = None
+    if has_hz:
+        hz = float(args.gait_hz)
+        if hz <= 0.0:
+            raise SystemExit("--gait-hz 必须 > 0")
+        period = 1.0 / hz
+    elif has_period:
+        period = float(args.gait_period)
+        if period <= 0.0:
+            raise SystemExit("--gait-period 必须 > 0")
+
+    if period is None:
+        return None
+
+    args.period = float(period)
+    args.nat_period = float(period)
+    args.gait_period = float(period)
+    args.gait_hz = 1.0 / float(period)
+    explicit |= {"period", "nat_period", "gait_period", "gait_hz"}
+    args._explicit_cli = explicit
+    return float(period)
+
+
 def apply_preset_preserving_cli(args, values):
-    """应用预设，但显式 CLI 对应的 dest 永远拥有最终优先级。"""
+    """应用预设，但显式 CLI 对应的 dest 永远拥有最终优先级。
+
+    Also syncs ``values`` (recipe dict) back from final ``args``. SoftTrot
+    builders prefer ``natural_params["period"]`` over ``cfg.nat_period``; without
+    this sync, ``--gait-period`` would update args/banner but leave ``nat_fwd``
+    stuck on the recipe period.
+    """
     explicit = {
         key: getattr(args, key)
         for key in getattr(args, "_explicit_cli", set())
@@ -383,4 +440,12 @@ def apply_preset_preserving_cli(args, values):
     apply_values(args, values)
     for key, value in explicit.items():
         setattr(args, key, value)
+    for key in list(values.keys()):
+        if hasattr(args, key):
+            values[key] = getattr(args, key)
+    # SoftTrot/Natural builders read recipe["period"]; follow nat_period.
+    if "period" in values and hasattr(args, "nat_period"):
+        values["period"] = float(args.nat_period)
+    if "nat_period" in values and hasattr(args, "nat_period"):
+        values["nat_period"] = float(args.nat_period)
     return sorted(explicit)

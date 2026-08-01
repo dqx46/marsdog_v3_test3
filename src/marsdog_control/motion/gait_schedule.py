@@ -133,8 +133,9 @@ class GaitEnvelope:
             period_nom=float(period),
             # Dog-like trot cadence; keep min/max close so full-stick doesn't
             # suddenly halve duty and blow roll (seen: st=0.50 @ vx=1 → tip).
-            period_min=max(0.48, float(period) * 0.94),
-            period_max=min(0.85, float(period) * 1.12),
+            # Bounds scale with CLI/preset period (no hard 0.85s cap).
+            period_min=max(0.40, float(period) * 0.94),
+            period_max=float(period) * 1.12,
             stance_nom=float(stance),
             stance_min=max(0.50, float(stance) - 0.03),
             stance_max=min(0.62, float(stance) + 0.03),

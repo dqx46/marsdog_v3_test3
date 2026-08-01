@@ -85,8 +85,8 @@ def run_walk_shutdown(ctx: WalkShutdownContext) -> None:
             ctx.lz, ctx.evo, ctx.dm, ctx.incos, cur2, stand_final, 1.5,
             label="return")
 
-    disable_secs = 8.0
-    print(f"[cleanup] {disable_secs:.0f}s 缓速失能...")
+    disable_secs = 5.0
+    print(f"[cleanup] {disable_secs:.0f}s 缓速失能 (kp 10→0)...")
     ctx.board.soft_disable(
         stand_final, ctx.actuation_runtime(),
         duration_s=disable_secs,

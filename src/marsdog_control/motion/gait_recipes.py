@@ -263,7 +263,13 @@ def build_controller_set(
             front_tarsus_push=0.0,
             front_thrust_gain=1.0,
             front_thrust_swing_gain=1.0,
-            front_foot_swing_track=0.0,
+            # 摆动相保留部分足朝向跟踪，避免触地/离地时 foot_pitch 被门控砸到站立角，
+            # 经 3-link IK 把 hip_pitch 目标拐成速度反向（日志里的“震一下”）。
+            front_foot_swing_track=np.get(
+                "front_foot_swing_track", cfg.front_foot_swing_track),
+            front_foot_stance_push_deg=np.get(
+                "front_foot_stance_push_deg",
+                nat_common["front_foot_stance_push_deg"]),
             front_stand_foot_pitch_deg=(
                 cfg.front_stand_foot_pitch_deg
                 if cfg.front_stand_foot_pitch_deg is not None
@@ -629,16 +635,19 @@ NATURAL_SOFT_TROT_REAL = {
 # duty≈0.56、T≈0.87s（原 0.58s 的 2/3 步频）、后驱；满杆包络收紧避免 st→0.50 翻车
 # Dog-trot WBC: light cadence + rear drive. Front swing must clear ground —
 # mid-stick step_h_front≈2cm left ~92% swing-drag and stalled after first strides.
+# 2026-08: 抬腿冲击=retract 主导足端 ax + 摆动中段前髋/膝高速。三轮软化：
+# r1 retract 28→16；r2→10/抬腿 32；r3（吊测）折膝 6mm、抬腿 28、峰 0.55。
+# 落地后再看蹭地；吊测优先压冲击。
 NATURAL_SOFT_TROT_WBC = {
     **NATURAL_SOFT_TROT_REAL,
     "amp_front": 0.050,
     "amp_rear": 0.068,
     "nat_amp_front": 0.050,
     "nat_amp_rear": 0.068,
-    "step_h": 0.048,
-    "nat_step_h": 0.048,
-    "step_h_front": 0.045,
-    "fwd_front_lift": 0.045,
+    "step_h": 0.036,
+    "nat_step_h": 0.036,
+    "step_h_front": 0.032,
+    "fwd_front_lift": 0.032,
     "period": 0.87,
     "nat_period": 0.87,
     "stance": 0.56,
@@ -648,18 +657,24 @@ NATURAL_SOFT_TROT_WBC = {
     "trot_roll_ff_neg_deg": 0.0,
     "trot_roll_ff_pos_deg": 0.0,
     "anti_roll_soft_scale": 0.0,
-    "retract_front": 0.028,
-    "retract_rear": 0.032,
-    "retract_peak": 0.40,
-    "lift_peak": 0.40,
-    "toeoff_lift": 0.007,
-    "touchdown_compress": 0.003,
+    "retract_front": 0.010,
+    "retract_rear": 0.010,
+    "retract_peak": 0.52,
+    "lift_peak": 0.52,
+    # 支撑相 Z bump 仍关（次要）；主因是换腿窗口 foot_pitch/imu_dz 门控过陡
+    "toeoff_lift": 0.0,
+    "touchdown_compress": 0.0,
+    # 换腿窗口折中：略放回换相速度消“顿”，仍保留足够门控防“震”
+    "front_foot_swing_track": 0.35,
+    "front_foot_stance_push_deg": 4.0,
+    # 摆动腿保留部分 IMU Z 预调平，触地不再从 0 硬爬
+    "swing_level": 0.40,
     "thigh_swing_front_deg": 0.0,
-    "thigh_swing_rear_deg": 6.0,
+    "thigh_swing_rear_deg": 2.5,
     "spine_yaw_deg": 2.2,
     "spine_roll_deg": 1.0,
     "throttle_min_scale": 0.45,
-    "rear_clearance_m": 0.024,
+    "rear_clearance_m": 0.012,
     # Spot-turn / cruise turn: abduction Y is primary; amp_diff only for curved walk
     "turn_y_amp": 0.040,
     "turn_amp_diff": 0.012,

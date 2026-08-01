@@ -252,17 +252,26 @@ class RkMotorBoard:
     def soft_disable(self, hold_target: Mapping[int, float], rt, *,
                      duration_s: float, control_hz: float, stop_check=None,
                      clock=None) -> bool:
+        """Ramp gains to zero over ``duration_s`` wall-clock seconds.
+
+        ``kp`` starts at 10 and falls linearly to 0. Alpha follows wall time so
+        a slow bus cannot stretch the fade past the requested duration.
+        """
         from marsdog_control.config.joints import DEFAULT_DM_KD, DEFAULT_DM_KP
 
         clock = clock or time
-        steps = max(1, int(duration_s * control_hz))
+        duration_s = max(1e-3, float(duration_s))
+        dt = 1.0 / max(1.0, float(control_hz))
+        kp_start = 10.0
+        kd_start = 0.5
         t0 = clock.monotonic()
-        for step in range(steps + 1):
+        while True:
             if stop_check is not None and stop_check():
                 return False
-            alpha = step / steps
-            kp = 10.0 * (1.0 - alpha)
-            kd = 0.5 * (1.0 - alpha)
+            elapsed = clock.monotonic() - t0
+            alpha = min(1.0, elapsed / duration_s)
+            kp = kp_start * (1.0 - alpha)
+            kd = kd_start * (1.0 - alpha)
             dm_kp_base = getattr(rt, "active_dm_kp", DEFAULT_DM_KP) if rt.dm_tarsus_active else DEFAULT_DM_KP
             dm_kd_base = getattr(rt, "active_dm_kd", DEFAULT_DM_KD) if rt.dm_tarsus_active else DEFAULT_DM_KD
             self.send_angles(
@@ -275,7 +284,11 @@ class RkMotorBoard:
             )
             sys.stdout.write(f"\r  [disable] {int(alpha*100):3d}%  kp={kp:.2f}   ")
             sys.stdout.flush()
-            sleep_t = t0 + (step + 1) / control_hz - clock.monotonic()
+            if alpha >= 1.0:
+                break
+            # Pace toward control_hz, but never schedule past the deadline.
+            next_t = min(t0 + duration_s, clock.monotonic() + dt)
+            sleep_t = next_t - clock.monotonic()
             if sleep_t > 0:
                 clock.sleep(sleep_t)
         sys.stdout.write("\n")

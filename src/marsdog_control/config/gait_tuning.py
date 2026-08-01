@@ -11,6 +11,8 @@ Operator cheat-sheet
 
 3. **仅本次试验的覆盖**
    → 命令行 ``--flag``（记入 ``_explicit_cli``，不被预设盖掉）。
+   SoftTrot 步频优先用 ``--gait-period SEC`` 或 ``--gait-hz HZ``
+   （同时覆盖 ``period`` / ``nat_period``）。
 
 ``GaitCliDefaults`` 是 **未进 RuntimeConfig** 的步态细参 argparse 默认值单点；
 ``GaitStackConfig.from_args`` 的 fallback 也读这里，避免 CLI / stack 魔法数各写一份。
@@ -162,6 +164,8 @@ def soft_trot_shape_keys() -> frozenset:
         "touchdown_compress", "anti_roll_soft_scale", "toeoff_lift",
         "retract_peak", "lift_peak",
         "front_foot_track_deg", "front_stand_foot_pitch_deg",
+        "front_foot_swing_track", "front_foot_stance_push_deg",
+        "swing_level",
         "swing_clearance_per_rad",
     })
 
