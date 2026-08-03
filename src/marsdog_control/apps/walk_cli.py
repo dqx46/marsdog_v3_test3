@@ -137,15 +137,14 @@ def parse_args():
                    help="[T] roll 静态配平 (mm), 抵消步态直流姿态偏置; +=补偿右歪, 热键 k/l 调 (默认0)")
     p.add_argument("--pitch-trim-mm", type=float, default=CLI.pitch_trim_mm,
                    help="[T] pitch 静态配平 (mm), 抵消俯仰直流偏置 (默认0)")
-    p.add_argument("--auto-trim", action=argparse.BooleanOptionalAction, default=CLI.auto_trim,
-                   help="[AT] roll 配平在线自学习: 慢积分学出步态直流偏置, 每台狗自适应(量产友好); 默认开, --no-auto-trim 关")
+    p.add_argument("--auto-trim", action=argparse.BooleanOptionalAction, default=False,
+                   help="[AT·已移除] 整机调平学习已删除; 此开关保留兼容, 开启也会被忽略")
     p.add_argument("--auto-trim-rate", type=float, default=CLI.auto_trim_rate,
-                   help="[AT] 自学习速率 m/(rad·s), 越大收敛越快越易过冲 (默认 0.12, 约3-4s收敛)")
+                   help="[AT·已移除] 兼容保留, 无效果")
     p.add_argument("--auto-trim-limit-mm", type=float, default=CLI.auto_trim_limit_mm,
-                   help="[AT] 自学习配平上下限 (mm), 防跑飞 (默认 12)")
+                   help="[AT·已移除] 兼容保留, 无效果")
     p.add_argument("--trim-phases", type=int, default=CLI.trim_phases,
-                   help="[ILC] 配平相位分桶数: 1=只学直流(原auto-trim); >1(建议12-20)=按相位学"
-                        "并前馈抵消trot换腿摇摆(零滞后不抖)")
+                   help="[AT·已移除] 兼容保留, 无效果")
     p.add_argument("--imu-predict-ms", type=float, default=CLI.imu_predict_ms,
                    help="[PRED] 执行器额外提前量(ms); 正式 NaturalSoftTrot 默认10; 总预测还会加当前 angle age")
     p.add_argument("--imu-predict-max-ms", type=float, default=CLI.imu_predict_max_ms,
@@ -332,13 +331,11 @@ def parse_args():
     p.add_argument("--imu-slew-mm-s", type=float, default=CLI.imu_slew_mm_s,
                    help="[E] IMU校正斜率限制(mm/s), 0=关闭; 建议 120~300")
     p.add_argument("--load-trim-cal", action=argparse.BooleanOptionalAction,
-                   default=True,
-                   help="[AT] 启动时加载 trim_cal.json; --no-load-trim-cal 忽略旧学习; "
-                        "--sim-parity 关")
+                   default=False,
+                   help="[AT·已移除] 不再加载 trim_cal.json; 开关保留兼容")
     p.add_argument("--save-trim-cal", action=argparse.BooleanOptionalAction,
-                   default=True,
-                   help="[AT] 关机时保存 auto-trim; --no-save-trim-cal 不写盘; "
-                        "--sim-parity 关")
+                   default=False,
+                   help="[AT·已移除] 不再保存 trim_cal.json; 开关保留兼容")
     p.add_argument(
         "--sim-parity", action=argparse.BooleanOptionalAction, default=False,
         help="[研究] 关闭叠加补偿: IMU学习/门控/预测/软启动、达妙 lead/dq_ff、"

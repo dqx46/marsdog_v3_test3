@@ -28,7 +28,7 @@ PATCHES: Tuple[PatchSpec, ...] = (
         parity_value=False, kind="bool",
     ),
     PatchSpec(
-        "auto_trim", "auto-trim/ILC学习", "auto_trim", "imu",
+        "auto_trim", "auto-trim/ILC(已移除)", "auto_trim", "imu",
         parity_value=False, kind="bool",
     ),
     PatchSpec(
@@ -122,11 +122,11 @@ PATCHES: Tuple[PatchSpec, ...] = (
         parity_value=0.0, kind="abs_nonzero",
     ),
     PatchSpec(
-        "load_trim_cal", "加载trim标定", "load_trim_cal", "persistence",
+        "load_trim_cal", "加载trim标定(已移除)", "load_trim_cal", "persistence",
         parity_value=False, kind="bool",
     ),
     PatchSpec(
-        "save_trim_cal", "保存trim标定", "save_trim_cal", "persistence",
+        "save_trim_cal", "保存trim标定(已移除)", "save_trim_cal", "persistence",
         parity_value=False, kind="bool",
     ),
 )

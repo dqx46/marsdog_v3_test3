@@ -209,38 +209,24 @@ def build_imu_attitude_controller(
         p_sched_hi_deg=cfg.roll_p_hi_deg,
         roll_trim_mm=cfg.roll_trim_mm,
         pitch_trim_mm=cfg.pitch_trim_mm,
-        auto_trim=cfg.auto_trim,
+        # auto-trim/ILC 已移除：强制关闭，忽略 cfg / trim_cal.json
+        auto_trim=False,
         auto_trim_rate=cfg.auto_trim_rate,
         auto_trim_limit_mm=cfg.auto_trim_limit_mm,
-        ff_phases=cfg.trim_phases,
+        ff_phases=1,
         predict_lead_s=cfg.imu_predict_ms / 1000.0,
         prediction_max_s=cfg.imu_predict_max_ms / 1000.0,
         gyro_max_age_s=cfg.imu_gyro_max_age_ms / 1000.0,
         dynamic_prediction=cfg.dynamic_imu_predict,
     )
+    if cfg.auto_trim:
+        print("[AT] auto-trim/ILC 整机调平学习已移除，忽略 --auto-trim / trim_cal")
     if cfg.imu_predict_ms > 1e-6:
         print(f"[PRED] IMU 动态预测: angle年龄 + 执行提前{cfg.imu_predict_ms:.0f}ms, "
               f"上限{cfg.imu_predict_max_ms:.0f}ms, gyro>{cfg.imu_gyro_max_age_ms:.0f}ms降级")
     if abs(cfg.roll_trim_mm) > 1e-6 or abs(cfg.pitch_trim_mm) > 1e-6:
         print(f"[T] 静态配平: roll={cfg.roll_trim_mm:+.1f}mm "
               f"pitch={cfg.pitch_trim_mm:+.1f}mm  (热键 k/l 调 roll)")
-    if cfg.auto_trim:
-        cal = load_trim_cal() if load_trim_cal is not None else None
-        loaded = False
-        if isinstance(cal, dict) and cal.get("roll_ff_mm"):
-            loaded = imu_ctrl.set_roll_ff_mm(cal["roll_ff_mm"])
-        if loaded:
-            lv = imu_ctrl.get_roll_ff_mm()
-            desc = (f"值{lv[0]:+.2f}mm" if len(lv) == 1
-                    else f"峰峰{imu_ctrl.roll_ff_span_mm:.1f}mm")
-            print(f"[AT] 已加载本机配平({cal.get('phases')}相位, {desc}) "
-                  f"→ 随振幅斜坡渐入, 起步不过修")
-        else:
-            print("[AT] 无匹配标定(或相位数变化), 本次现场学习并保存 (仅首次有瞬态)")
-        mode = (f"ILC×{cfg.trim_phases}相位"
-                if cfg.trim_phases > 1 else "单值直流")
-        print(f"[AT] roll 在线自学习({mode}): rate={cfg.auto_trim_rate:.2f} "
-              f"±{cfg.auto_trim_limit_mm:.0f}mm (每台狗自适应, 结束自动保存)")
     if cfg.imu_ema > 1e-6:
         print(f"[P2] IMU D项 gyro EMA 滤波 = {cfg.imu_ema:.2f}")
     if cfg.damp_hard_mm > 3.0 + 1e-6:

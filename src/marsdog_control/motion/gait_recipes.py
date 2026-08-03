@@ -576,17 +576,14 @@ NATURAL_TROT_REAL = {
 
 # 实机 NaturalSoftTrot 预设 —— **步态形状/手感的唯一真源**。
 # 调 SoftTrot：只改本 dict（见 config/gait_tuning.py 入口说明）。
-# 与仿真验证套 (SIM_PREVIEW_BASE ∪ SIM_PREVIEW_NATURAL_SOFT_TROT) 对齐。
-#   - walk_startup 用 apply_preset_preserving_cli 灌进 args；显式 --flag 保留。
-#   - 只排除纯运行期开关(var_impedance/gravity_comp/auto_trim/leg_kp_scale/fwd_use_bwd)。
-# 要减速/降幅：摇杆油门，或临时改本 dict。
+# 2026-08 对齐清理：横向只留 com_shift；关 anti_roll/sway/roll_ff/spine/flourish/
+# IMU 预测门控/达妙 lead 等互殴叠层。auto-trim 已从代码路径移除。
 NATURAL_SOFT_TROT_REAL = {
     # ── 体高 / 节奏 / 支撑相 ──
     "height": 0.24,
     "period": 0.90,
     "nat_period": 0.90,
-    "stance": 0.66,               # 软 trot 靠长支撑相降冲击
-    # ── 摆幅 / 抬腿 (满幅=仿真值; 实机靠摇杆油门线性缩放到这个上限) ──
+    "stance": 0.66,
     "amp_front": 0.026,
     "amp_rear": 0.026,
     "nat_amp_front": 0.026,
@@ -595,57 +592,60 @@ NATURAL_SOFT_TROT_REAL = {
     "nat_step_h": 0.040,
     "step_h_front": 0.040,
     "fwd_front_lift": 0.040,
-    # ── NaturalSoftTrot 柔顺核心形状 ──
+    # ── 核心足端形状（非叠加补丁）──
     "touchdown_compress": 0.004,
-    "anti_roll_soft_scale": 0.35,
+    "anti_roll_soft_scale": 0.0,
     "toeoff_lift": 0.002,
     "retract_peak": 0.36,
     "lift_peak": 0.42,
-    # 前腿由三关节 IK 严格保持足朝向；禁止 IK 后单关节 flourish。
     "thigh_swing_front_deg": 0.0,
-    "thigh_swing_rear_deg": 12.0,
+    "thigh_swing_rear_deg": 0.0,
     "retract_front": 0.018,
     "retract_rear": 0.014,
     "tarsus_swing_deg": 0.0,
     "swing_clearance_per_rad": 0.35,
-    # 横向质心：REAL 默认关；大步 SoftTrot(WBC 几何预设) 再开 com_shift_m
     "com_shift_m": 0.0,
     "com_shift_blend": 0.12,
     "rear_clearance_m": 0.0,
     "swing_level": 0.0,
-    # ── 前脚朝向跟踪 (支撑相脚尖指地 -78°, 摆动相关闭让 tarsus 翻爪) ──
     "front_thrust_gain": 1.0,
     "front_thrust_swing_gain": 1.0,
     "front_tarsus_push": 0.0,
     "front_foot_track_deg": -78.0,
-    "front_foot_stance_push_deg": 10.0,
-    "front_foot_swing_track": 0.0,
-    "front_stand_foot_pitch_deg": -90.0,   # 与 front_foot_track 配套, 保证 stand==步态起点
-    # ── 脊柱律动: 软 trot 仿真里也关(0/0) ──
+    "front_foot_stance_push_deg": 0.0,
+    "front_foot_swing_track": 1.0,
+    "front_stand_foot_pitch_deg": -90.0,
     "spine_yaw_deg": 0.0,
     "spine_roll_deg": 0.0,
-    # ── 抗侧倾 / 前馈 ──
-    "lateral_sway": 0.004,
-    "anti_roll": 0.010,
-    "anti_roll_asym_neg": 1.05,
-    "anti_roll_asym_pos": 0.98,
-    "trot_roll_ff_neg_deg": 1.2,
-    "trot_roll_ff_pos_deg": 1.0,
-    "ff_decouple": True,
-    # ── IMU 闭环 (仿真值) ──
+    # ── 互殴叠层：全部关 ──
+    "lateral_sway": 0.0,
+    "anti_roll": 0.0,
+    "anti_roll_asym_neg": 1.0,
+    "anti_roll_asym_pos": 1.0,
+    "trot_roll_ff_neg_deg": 0.0,
+    "trot_roll_ff_pos_deg": 0.0,
+    "ff_decouple": False,
+    "auto_trim": False,
+    "load_trim_cal": False,
+    "save_trim_cal": False,
     "imu_kp": 0.040,
     "imu_kp_pitch": 0.040,
     "max_corr_mm": 14.0,
-    "imu_slew_mm_s": 80.0,
-    "imu_predict_ms": 10.0,        # 100Hz后仅作为额外执行提前量
-    "imu_phase_gate": True,
+    "imu_slew_mm_s": 0.0,
+    "imu_predict_ms": 0.0,
+    "imu_softstart_s": 0.0,
+    "dynamic_imu_predict": False,
+    "imu_phase_gate": False,
     "imu_phase_td_gain": 0.25,
     "imu_phase_swing_gain": 0.50,
-    "td_imu_freeze_i": True,
+    "td_imu_freeze_i": False,
+    "tarsus_lead_fl_ms": 0.0,
+    "tarsus_lead_fr_ms": 0.0,
+    "dm_dq_feedforward": False,
 }
 
 # SoftTrot 统一几何（仿真/真机 walk_startup 灌此 dict；含无 WBC 阻抗基线）。
-# 体高 0.25 + T=1.20；步幅改回 h0.23 抑蹦档 amp2.2/3.0（3.9/5.2 观感步距过大）。
+# 体高 0.25 + T=1.20 + amp2.2/3.0；横向唯一策略 com_shift=12mm。
 NATURAL_SOFT_TROT_WBC = {
     **NATURAL_SOFT_TROT_REAL,
     "height": 0.25,
@@ -672,18 +672,17 @@ NATURAL_SOFT_TROT_WBC = {
     "retract_rear": 0.008,
     "retract_peak": 0.42,
     "lift_peak": 0.48,
-    # 触地更软、离地更轻 → 少把身子弹起来
     "toeoff_lift": 0.0008,
     "touchdown_compress": 0.006,
-    "front_foot_swing_track": 0.35,
-    "front_foot_stance_push_deg": 3.0,
-    "swing_level": 0.35,
+    "front_foot_swing_track": 1.0,
+    "front_foot_stance_push_deg": 0.0,
+    "swing_level": 0.0,
     "thigh_swing_front_deg": 0.0,
-    "thigh_swing_rear_deg": 1.0,
-    "spine_yaw_deg": 1.0,
-    "spine_roll_deg": 0.4,
+    "thigh_swing_rear_deg": 0.0,
+    "spine_yaw_deg": 0.0,
+    "spine_roll_deg": 0.0,
     "throttle_min_scale": 0.45,
-    "rear_clearance_m": 0.005,
+    "rear_clearance_m": 0.0,
     # Spot-turn / cruise turn: abduction Y is primary; amp_diff only for curved walk
     "turn_y_amp": 0.040,
     "turn_amp_diff": 0.012,

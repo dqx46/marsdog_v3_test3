@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import statistics
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -111,51 +110,8 @@ def run_walk_shutdown(ctx: WalkShutdownContext) -> None:
 
 
 def _save_auto_trim_calibration(ctx: WalkShutdownContext) -> None:
-    if (ctx.joint_direction_test
-            or not getattr(ctx.args, "auto_trim", False)
-            or ctx.imu_ctrl is None):
-        return
-
-    count = len(ctx.imu_ctrl.get_roll_ff_mm())
-    previous = ctx.load_trim_cal()
-    values = None
-    source = ""
-    history = ctx.balance_runtime.ff_hist
-
-    if len(history) >= 20:
-        tail = history[int(len(history) * 0.6):]
-        candidate = [statistics.median(sample[i] for sample in tail)
-                     for i in range(count)]
-        source = f"{len(tail)}样本中位数"
-
-        if (isinstance(previous, dict)
-                and previous.get("roll_ff_mm")
-                and len(previous["roll_ff_mm"]) == count):
-            alpha = 0.25
-            step_limit = 1.0
-            values = []
-            for i in range(count):
-                old = float(previous["roll_ff_mm"][i])
-                ema = alpha * candidate[i] + (1 - alpha) * old
-                lo = old - step_limit
-                hi = old + step_limit
-                values.append(round(max(lo, min(hi, ema)), 3))
-            source += "+跨run EMA限幅"
-        else:
-            values = [round(v, 3) for v in candidate]
-    elif (isinstance(previous, dict)
-          and previous.get("roll_ff_mm")
-          and len(previous["roll_ff_mm"]) == count):
-        values = [round(float(v), 3) for v in previous["roll_ff_mm"]]
-        source = f"样本不足({len(history)}), 沿用上次"
-    else:
-        values = ctx.imu_ctrl.get_roll_ff_mm()
-        source = f"样本不足({len(history)}), 兜底末值"
-
-    if ctx.save_trim_cal(values, ctx.imu_ctrl.roll_trim * 1000.0):
-        print(f"[AT] 本机配平已保存({ctx.imu_ctrl.ff_phases}相位, {source}, "
-              f"值{values[0]:+.2f}mm) → {os.path.basename(ctx.trim_cal_path)}")
-
+    """auto-trim/ILC 已移除：不再写 trim_cal.json。"""
+    return
 
 __all__ = [
     "WalkShutdownContext",

@@ -133,11 +133,12 @@ class ImuConfig:
     softstart_s: float = 1.5
     roll_trim_m: float = 0.0
     pitch_trim_m: float = 0.0
-    auto_trim_enabled: bool = True
+    # auto-trim/ILC 整机调平学习已移除（sim↔real 对齐噪声源）；字段保留仅兼容 CLI。
+    auto_trim_enabled: bool = False
     auto_trim_rate_m_rad_s: float = 0.08
     auto_trim_limit_m: float = 0.012
     trim_phases: int = 1
-    phase_gate_enabled: bool = True
+    phase_gate_enabled: bool = False
     phase_td_gain: float = 0.35
     phase_swing_gain: float = 0.70
 

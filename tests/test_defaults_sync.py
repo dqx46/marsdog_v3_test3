@@ -24,8 +24,10 @@ from marsdog_control.core.units import deg_to_rad, mm_to_m, ms_to_s  # noqa: E40
 
 # Schema field expectations (authoritative numbers live in schema.py).
 _SCHEMA_DEFAULTS = [
-    ("features", "imu_enabled", True),
-    ("features", "imu_feedback_enabled", True),
+    ("features", "imu_enabled", False),
+    ("features", "imu_feedback_enabled", False),
+    ("imu", "auto_trim_enabled", False),
+    ("imu", "phase_gate_enabled", False),
     ("features", "gravity_comp_enabled", True),
     ("features", "variable_impedance_enabled", False),
     ("features", "tail_enabled", True),

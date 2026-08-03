@@ -303,29 +303,12 @@ class ImuAttitudeController:
         self._roll_i = _clamp(self._roll_i, -mc, mc)
         self._pitch_i = _clamp(self._pitch_i, -mc, mc)
 
-        # [AT/ILC] 在线自学习前馈: 按 gait 相位分桶, 慢积分原始 roll, 前馈抵消。
-        #   ff_phases=1 → 单桶=学直流(原 auto-trim); >1 → 逐相位学摇摆曲线(ILC)。
-        #   必须与 P 项(kp*roll, 已验证修正正确)同号才是负反馈:
-        #   roll<0(右歪) → ff 变负 → out_roll 变负 → 拉 roll 回 0; 平衡点 roll≈0 自停。
-        #   (取反号会变正反馈自激发散 → 曾导致腿疯狂抽搐, 切勿改回 -roll)
-        #   前馈=零滞后零噪声, 不注入抖动。落地窗口冻结防冲击污染学习值。
+        # [AT/ILC] 整机调平学习已移除（2026-08）：不再在线积分 _roll_ff。
+        # 仍允许手动 --roll-trim-mm / 热键静态偏置；_roll_ff 恒为 0。
         n = self.ff_phases
         ff_bin = int(gait_phase * n) % n if n > 1 else 0
-        if self.auto_trim and not freeze_integrator:
-            # 单桶被访问频率 1/n, 乘 n 使墙钟收敛速度与相位数无关
-            rate = self.auto_trim_rate * (n if n > 1 else 1)
-            delta = rate * roll * dt_s
-            lim = self.auto_trim_limit
-            # [Q滤波] 把每次调整抹到相邻桶(三角核), 禁止相邻桶正负打架撞轨(防ILC因
-            #   物理延迟发散)。n=1 时三个偏移都落到 0 桶, 退化为原单值行为。
-            for off, w in ((-1, 0.25), (0, 0.5), (1, 0.25)):
-                j = (ff_bin + off) % n
-                self._roll_ff[j] = _clamp(self._roll_ff[j] + w * delta, -lim, lim)
 
-        # [T/ILC] 前馈直接加入输出 (不受死区影响): 手动静态 roll_trim + 学习到的相位前馈
-        #   trim_gain: 配平项随步态振幅斜坡渐入 (0→1)。稳态直流偏置在起步时尚未发育,
-        #   若满幅怼上会过度修正把狗弹起("起飞"); 按振幅比例施加则永不过修。
-        #   注意: 只门控配平/前馈, 不动 P/I/D 反馈, 反馈仍可即时压扰动。
+        # 仅静态 trim（手动）；学习表已废弃
         trim_r = trim_gain * (self.roll_trim + self._roll_ff[ff_bin])
         trim_p = trim_gain * self.pitch_trim
         pg = _clamp(phase_gain, 0.0, 1.0)
@@ -424,10 +407,6 @@ class ImuAttitudeController:
                  if self.p_boost > 1.0 else "")
         trim = (f"  trim(r/p)={self.roll_trim*1000:+.1f}/{self.pitch_trim*1000:+.1f}mm"
                 if (self.roll_trim or self.pitch_trim) else "")
-        if self.auto_trim:
-            mode = f"ILC×{self.ff_phases}相位" if self.ff_phases > 1 else "AUTOtrim"
-            trim += (f"  {mode}(rate={self.auto_trim_rate:.2f},"
-                     f"±{self.auto_trim_limit*1000:.0f}mm)")
         pred = (f"  执行提前={self.predict_lead_s*1000:.0f}ms"
                 f"+数据年龄(上限{self.prediction_max_s*1000:.0f}ms)"
                 if self.predict_lead_s > 1e-6 else "")
