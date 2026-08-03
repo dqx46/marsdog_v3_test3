@@ -377,6 +377,12 @@ class SoftTrotSchedule:
             speed_frac = self._speed_frac(u)
 
         sign = 1.0 if vx >= 0.0 else -1.0
+        # SoftTrot BWD today: only sign-flip (no front/rear amp swap).
+        # Forward recipe is asymmetric (front 2.2 / rear 3.0); reverse keeps that
+        # asymmetry mirrored → front steps stay small while rear stays large.
+        # TODO(bwd): when vx<0, swap |amp_f|/|amp_r| (and optionally bwd_amp_scale)
+        # so reverse uses the larger push on the new "drive" end — see walk logs
+        # where natural_bwd roll/err stay worse after FWD lock-D tuning.
         amp_f = sign * e.amp_front_max * speed_frac
         amp_r = sign * e.amp_rear_max * speed_frac
         if speed_frac > 1e-9:

@@ -25,7 +25,9 @@ class SoftTrotComShiftTest(unittest.TestCase):
         self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["com_shift_m"]), 0.012)
         self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["height"]), 0.25)
         self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["step_h"]), 0.024)
-        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["stance"]), 0.74)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["stance"]), 0.72)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["period"]), 1.05)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["leg_kp_scale"]), 0.90)
         self.assertAlmostEqual(
             float(NATURAL_SOFT_TROT_WBC.get("lateral_sway", 0.0)), 0.0)
         self.assertAlmostEqual(

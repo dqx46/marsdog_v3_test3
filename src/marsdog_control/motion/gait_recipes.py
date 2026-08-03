@@ -579,10 +579,11 @@ NATURAL_TROT_REAL = {
 # 横向只留 com_shift；IMU lead/spine/flourish 等互殴叠层默认全关。
 NATURAL_SOFT_TROT = {
     # ── 体高 / 节奏 / 支撑相 ──
+    # 2026-08-03 真机锁 D：T=1.05 / st=0.72 / kp×0.90（连感+稳，优于 1.20/0.74 机械感）
     "height": 0.25,
-    "period": 1.20,
-    "nat_period": 1.20,
-    "stance": 0.74,
+    "period": 1.05,
+    "nat_period": 1.05,
+    "stance": 0.72,
     "amp_front": 0.022,
     "amp_rear": 0.030,
     "nat_amp_front": 0.022,
@@ -592,6 +593,8 @@ NATURAL_SOFT_TROT = {
     "step_h_front": 0.020,
     "fwd_front_lift": 0.020,
     "fwd_front_amp_scale": 1.0,
+    # SoftTrot 默认柔顺叠加（schema.control 同步）；CLI --leg-kp-scale 可覆盖
+    "leg_kp_scale": 0.90,
     # ── 核心足端形状 ──
     # 3.5mm + 加宽 TD 窗：旧 6mm/0.24stance 在短 stance 下后小腿目标 dq 爆
     "touchdown_compress": 0.0035,

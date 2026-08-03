@@ -95,7 +95,7 @@ def resolve_gains(
     )
 
     b = brand_scales(j.mtype, brand_gain_scale or BRAND_GAIN_SCALE)
-    # Jump/spot may pass leg_kp_scale != 1 on leg joints; SoftTrot keeps 1.0.
+    # Jump/spot may pass leg_kp_scale != SoftTrot default on leg joints.
     leg_overlay = float(leg_kp_scale) if _is_leg_joint(j.name) else 1.0
     kp_mult = float(kp_scale) * float(b["kp"]) * float(phase_scale) * leg_overlay
     kd_mult = float(b["kd"])

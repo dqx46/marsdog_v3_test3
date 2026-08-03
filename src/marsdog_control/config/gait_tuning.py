@@ -73,7 +73,7 @@ class GaitCliDefaults:
     pace_sway: float = 0.015
 
     # natural shape — aligned with NATURAL_SOFT_TROT
-    nat_period: float = 1.20
+    nat_period: float = 1.05
     nat_amp_front: float = 0.022
     nat_amp_rear: float = 0.030
     nat_step_h: float = 0.024

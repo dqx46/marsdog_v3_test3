@@ -53,12 +53,13 @@ class HardwareConfig:
 @dataclass(frozen=True)
 class GaitConfig:
     body_height_m: float = 0.25
-    period_s: float = 1.20
+    # SoftTrot SSOT (NATURAL_SOFT_TROT): 2026-08-03 lock D
+    period_s: float = 1.05
     step_height_m: float = 0.024
     front_step_height_m: Optional[float] = 0.020
     amp_front_m: float = 0.022
     amp_rear_m: float = 0.030
-    stance_ratio: float = 0.74
+    stance_ratio: float = 0.72
     hip_abduction_rad: float = 0.08
     ramp_s: float = 3.5
     fade_s: float = 3.0
@@ -68,9 +69,9 @@ class GaitConfig:
 
 @dataclass(frozen=True)
 class ControlConfig:
-    # Default 1.0: brand-native JOINT_GAINS / BRAND_GAIN_SCALE own softening.
-    # Non-1 values are temporary overlays (jump phases), not SoftTrot global soft.
-    leg_kp_scale: float = 1.0
+    # SoftTrot real default 0.90 (lock D): slight compliance vs raw JOINT_GAINS.
+    # Jump / spot may still override transiently; brand tables stay at native units.
+    leg_kp_scale: float = 0.90
     kp_scale: float = 1.0
     td_kp_scale: float = 0.4
     swing_kp_scale: float = 0.7
