@@ -37,5 +37,8 @@ Thumbs.db
 telemetry.csv
 telemetry.json
 telemetry_summary.json
+
+# static_test motor-status schematic
+static_test_status.png
 .pytest_cache/
 docs/.$marsdog_control_architecture.drawio.bkp
