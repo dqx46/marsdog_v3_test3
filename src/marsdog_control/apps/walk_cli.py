@@ -12,6 +12,7 @@ import sys
 
 from marsdog_control.config.defaults import CLI
 from marsdog_control.config.gait_tuning import GAIT
+from marsdog_control.config.real_patches import apply_sim_parity
 from marsdog_control.motion.gait_recipes import (
     apply_trot_preview_real,
     apply_values,
@@ -171,11 +172,14 @@ def parse_args():
                    help="横向重心摆动幅度 (m), 半正弦旧法; SoftTrot 有 --com-shift 时忽略")
     p.add_argument("--com-shift", type=float, default=GAIT.com_shift_m,
                    dest="com_shift_m", metavar="M",
-                   help="[位控·质心] SoftTrot 横向移重 (m); |M|>0=事件型对角移重心。"
-                        "正=FL+RR→右(sim更稳); 负=反相。默认菜谱 0.016；0=关")
+                   help="[位控·质心] SoftTrot 横向移重 (m); 菜谱默认 0.016, 0=关; "
+                        "正=FL+RR→右; --sim-parity 会关掉")
     p.add_argument("--com-shift-blend", type=float, default=GAIT.com_shift_blend,
                    dest="com_shift_blend", metavar="PHASE",
                    help="[位控·质心] 对角换腿 smoothstep 半宽 (相位 0~0.2), 默认 0.12")
+    p.add_argument("--rear-clearance", type=float, default=GAIT.rear_clearance_m,
+                   dest="rear_clearance_m", metavar="M",
+                   help="[补丁] 后腿摆动额外净空 (m); 默认 0=关, 优先调 step_h")
     p.add_argument("--pace-period", type=float, default=GAIT.pace_period,
                    help="Pace 步态周期 (s), 默认 1.2 (慢速保稳)")
     p.add_argument("--pace-stance", type=float, default=GAIT.pace_stance,
@@ -273,8 +277,10 @@ def parse_args():
                    help="[P2] 摆动腿 IMU 预调平权重 0~1 (默认0=仅支撑腿; >0 让摆动腿落脚点也随姿态纠正)")
     p.add_argument("--imu-ema",     type=float, default=GAIT.imu_ema,
                    help="[P2] IMU 角度额外 EMA 滤波系数 0~1 (默认0=关; D 项改用滤波后角速度去抖)")
-    p.add_argument("--ff-decouple", action="store_true",
-                   help="[P2] 启用 expected_roll/pitch 前馈解耦(相位修正后从实测扣除)")
+    p.add_argument("--ff-decouple", action=argparse.BooleanOptionalAction,
+                   default=CLI.ff_decouple,
+                   help="[P2] expected_roll/pitch 前馈解耦; SoftTrot 预设常开, "
+                        "--no-ff-decouple 关; --sim-parity 默认关")
     p.add_argument("--leg-kp-scale", type=float, default=CLI.leg_kp_scale,
                    help="[临时] kp 叠加缩放(默认1.0)。SoftTrot 请改 config/gains.py 分品牌表，"
                         "勿再用本参数做全局软化；跳步阶段仍可能临时改写")
@@ -319,10 +325,27 @@ def parse_args():
     p.add_argument("--max-corr-mm",  type=float, default=CLI.max_corr_mm,
                    help="[D] IMU 最大补偿限幅(mm), 默认20; 增益调度救发散时可提到30")
     # ── E: 落地冲击抑制 (IMU 机制保护) ──
-    p.add_argument("--td-imu-freeze-i", action="store_true",
-                   help="[E] 触地窗口冻结IMU积分: 抑制落地冲击导致的积分残留 (默认关)")
+    p.add_argument("--td-imu-freeze-i", action=argparse.BooleanOptionalAction,
+                   default=False,
+                   help="[E] 触地窗口冻结IMU积分; SoftTrot 预设常开, "
+                        "--no-td-imu-freeze-i 关; --sim-parity 默认关")
     p.add_argument("--imu-slew-mm-s", type=float, default=CLI.imu_slew_mm_s,
                    help="[E] IMU校正斜率限制(mm/s), 0=关闭; 建议 120~300")
+    p.add_argument("--load-trim-cal", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="[AT] 启动时加载 trim_cal.json; --no-load-trim-cal 忽略旧学习; "
+                        "--sim-parity 关")
+    p.add_argument("--save-trim-cal", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="[AT] 关机时保存 auto-trim; --no-save-trim-cal 不写盘; "
+                        "--sim-parity 关")
+    p.add_argument(
+        "--sim-parity", action=argparse.BooleanOptionalAction, default=False,
+        help="[研究] 关闭叠加补偿: IMU学习/门控/预测/软启动、达妙 lead/dq_ff、"
+             "trim 读写、anti_roll/sway/roll_ff、com_shift/spine/rear_clearance/"
+             "flourish 等。保留 period/amp/step_h/touchdown_compress。"
+             "单项可用显式 --flag 再打开做 A/B",
+    )
     # ── A(柔顺): 相位可变阻抗 (落地降kp吸震, 支撑中期撑体重) ──
     p.add_argument("--var-impedance", action=argparse.BooleanOptionalAction, default=CLI.var_impedance,
                    help="[柔顺A] 相位可变阻抗: 触地窗口降腿部kp软着陆, 支撑中期恢复1.0, 摆动中等; 正式 NaturalSoftTrot 默认关, --var-impedance 开")
@@ -384,6 +407,8 @@ def parse_args():
                 explicit_dests.add(action.dest)
     args = p.parse_args()
     args._explicit_cli = explicit_dests
+    # sim-parity before cadence/presets so SoftTrot recipe cannot revive patches.
+    apply_sim_parity(args)
     apply_gait_cadence_cli(args)
     if args.trot_preview:
         explicit_values = {

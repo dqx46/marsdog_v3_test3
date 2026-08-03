@@ -611,6 +611,8 @@ NATURAL_SOFT_TROT_REAL = {
     # 横向质心：REAL 默认关；大步 SoftTrot(WBC 几何预设) 再开 com_shift_m
     "com_shift_m": 0.0,
     "com_shift_blend": 0.12,
+    "rear_clearance_m": 0.0,
+    "swing_level": 0.0,
     # ── 前脚朝向跟踪 (支撑相脚尖指地 -78°, 摆动相关闭让 tarsus 翻爪) ──
     "front_thrust_gain": 1.0,
     "front_thrust_swing_gain": 1.0,
@@ -643,50 +645,45 @@ NATURAL_SOFT_TROT_REAL = {
 }
 
 # SoftTrot 统一几何（仿真/真机 walk_startup 灌此 dict；含无 WBC 阻抗基线）。
-# 2026-08-03 阻抗无头网格 (scripts/tune_soft_trot_impedance.py, 137 case):
-#   旧 0.58/st0.56/h4.8/com25 → vz_pk~0.42 崩跳大、真机偏快
-#   瞎改 0.88/st0.66/h3.2/com10 → roll_pk~13 / vy_pk~0.45 最差
-#   最优折中 T0.72/st0.68/h3.4/com16：score 最优，vz_pk~0.10，roll_pk~8
+# 体高 0.25 + T=1.20；步幅改回 h0.23 抑蹦档 amp2.2/3.0（3.9/5.2 观感步距过大）。
 NATURAL_SOFT_TROT_WBC = {
     **NATURAL_SOFT_TROT_REAL,
-    "amp_front": 0.039,
-    "amp_rear": 0.052,
-    "nat_amp_front": 0.039,
-    "nat_amp_rear": 0.052,
-    "step_h": 0.034,
-    "nat_step_h": 0.034,
-    "step_h_front": 0.030,
-    "fwd_front_lift": 0.030,
-    "period": 0.72,
-    "nat_period": 0.72,
-    "stance": 0.68,
+    "height": 0.25,
+    "amp_front": 0.022,
+    "amp_rear": 0.030,
+    "nat_amp_front": 0.022,
+    "nat_amp_rear": 0.030,
+    "step_h": 0.024,
+    "nat_step_h": 0.024,
+    "step_h_front": 0.020,
+    "fwd_front_lift": 0.020,
+    "period": 1.20,
+    "nat_period": 1.20,
+    "stance": 0.74,
     "fwd_front_amp_scale": 1.0,
-    # 事件型移重：同网格在 T0.72/st0.68 下 com=16mm 优于 0/8/12/20
-    "com_shift_m": 0.016,
+    "com_shift_m": 0.012,
     "com_shift_blend": 0.12,
     "lateral_sway": 0.0,
     "anti_roll": 0.0,
     "trot_roll_ff_neg_deg": 0.0,
     "trot_roll_ff_pos_deg": 0.0,
     "anti_roll_soft_scale": 0.0,
-    "retract_front": 0.012,
-    "retract_rear": 0.010,
-    "retract_peak": 0.40,
-    "lift_peak": 0.46,
-    # 轻触地压缩 + 微量离地，压低换腿冲击（阻抗路径尤其需要）
-    "toeoff_lift": 0.001,
-    "touchdown_compress": 0.003,
-    # 换腿窗口折中：略放回换相速度消“顿”，仍保留足够门控防“震”
+    "retract_front": 0.010,
+    "retract_rear": 0.008,
+    "retract_peak": 0.42,
+    "lift_peak": 0.48,
+    # 触地更软、离地更轻 → 少把身子弹起来
+    "toeoff_lift": 0.0008,
+    "touchdown_compress": 0.006,
     "front_foot_swing_track": 0.35,
-    "front_foot_stance_push_deg": 4.0,
-    # 摆动腿保留部分 IMU Z 预调平，触地不再从 0 硬爬
-    "swing_level": 0.40,
+    "front_foot_stance_push_deg": 3.0,
+    "swing_level": 0.35,
     "thigh_swing_front_deg": 0.0,
-    "thigh_swing_rear_deg": 2.5,
-    "spine_yaw_deg": 2.2,
-    "spine_roll_deg": 1.0,
+    "thigh_swing_rear_deg": 1.0,
+    "spine_yaw_deg": 1.0,
+    "spine_roll_deg": 0.4,
     "throttle_min_scale": 0.45,
-    "rear_clearance_m": 0.008,
+    "rear_clearance_m": 0.005,
     # Spot-turn / cruise turn: abduction Y is primary; amp_diff only for curved walk
     "turn_y_amp": 0.040,
     "turn_amp_diff": 0.012,

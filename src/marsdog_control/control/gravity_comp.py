@@ -76,15 +76,15 @@ def _front_chain(q_hp, q_calf):
     cx, cz = _ry(th_tr, 0.019147, -0.03082)
     tr = (_M_F_THIGH, trx + cx)
 
-    # calf 关节 (在 thigh_roll link 系)
-    dx, dz = _ry(th_tr, 0.0235, -0.069995)
+    # calf 关节 (在 thigh_roll link 系) — 大腿连杆 90mm
+    dx, dz = _ry(th_tr, 0.02861305, -0.08522429)
     cjx, cjz = trx + dx, trz + dz
     th_calf = th_tr + q_calf
     cx, cz = _ry(th_calf, 0.001263, -0.03026)
     calf = (_M_F_CALF, cjx + cx)
 
-    # tarsus 关节 (在 calf link 系, 被动 → 角=0)
-    dx, dz = _ry(th_calf, 0.0040403, -0.12194)
+    # tarsus 关节 (在 calf link 系, 被动 → 角=0) — 小腿连杆 110mm
+    dx, dz = _ry(th_calf, 0.003642077, -0.1099213)
     tjx, tjz = cjx + dx, cjz + dz
     th_tar = th_calf
     cx, cz = _ry(th_tar, 0.0, -0.026597)

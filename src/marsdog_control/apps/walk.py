@@ -300,6 +300,14 @@ def main(args=None):
     if startup is None:
         return
     args = startup.args
+    _load_trim = (
+        _load_trim_cal if bool(getattr(args, "load_trim_cal", True))
+        else (lambda: None)
+    )
+    _save_trim = (
+        _save_trim_cal if bool(getattr(args, "save_trim_cal", True))
+        else (lambda *a, **k: None)
+    )
     runtime_state = startup.runtime_state
     runtime_config = startup.runtime_config
     imu_cfg = runtime_config.imu
@@ -404,7 +412,7 @@ def main(args=None):
         jump_params=getattr(startup, "jump_params", None),
         trot_flag=startup.trot_flag,
         no_spine=startup.no_spine,
-        load_trim_cal=_load_trim_cal,
+        load_trim_cal=_load_trim,
     )
     stand = stack.stand
 
@@ -448,7 +456,7 @@ def main(args=None):
         build_lie_down_target=build_lie_down_target,
         build_sit_target=build_sit_target,
         stop_scope=_stop_scope,
-        load_trim_cal=_load_trim_cal, save_trim_cal=_save_trim_cal,
+        load_trim_cal=_load_trim, save_trim_cal=_save_trim,
         trim_cal_path=_TRIM_CAL_PATH,
         control_hz=CONTROL_HZ,
     ))

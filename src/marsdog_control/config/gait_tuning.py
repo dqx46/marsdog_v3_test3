@@ -45,8 +45,8 @@ class GaitCliDefaults:
     front_thrust_swing_gain: float = 1.0
     front_tarsus_push: float = 0.0
     front_foot_track_deg: float = -78.0
-    front_foot_stance_push_deg: float = 0.0
-    front_foot_swing_track: float = 1.0
+    front_foot_stance_push_deg: float = 10.0
+    front_foot_swing_track: float = 0.0
     swing_clearance_per_rad: float = 0.35
     reactive_kp: float = 0.0
     reactive_kd: float = 0.0
@@ -54,11 +54,11 @@ class GaitCliDefaults:
     # SoftTrot 横向质心规划 (m); >0 时用事件型移重，覆盖 half-sine lateral_sway
     com_shift_m: float = 0.0
     com_shift_blend: float = 0.12
-    anti_roll: float = 0.003
-    trot_roll_ff_neg_deg: float = 0.0
-    trot_roll_ff_pos_deg: float = 0.0
-    anti_roll_asym_neg: float = 1.0
-    anti_roll_asym_pos: float = 1.0
+    anti_roll: float = 0.010
+    trot_roll_ff_neg_deg: float = 1.2
+    trot_roll_ff_pos_deg: float = 1.0
+    anti_roll_asym_neg: float = 1.05
+    anti_roll_asym_pos: float = 0.98
 
     # backward / pace
     bwd_amp_scale: float = 0.7
@@ -75,7 +75,7 @@ class GaitCliDefaults:
     nat_period: float = 0.90
     nat_amp_front: float = 0.026
     nat_amp_rear: float = 0.026
-    nat_step_h: float = 0.016
+    nat_step_h: float = 0.040
     spine_yaw_deg: float = 0.0
     spine_roll_deg: float = 0.0
     spine_phase_deg: float = 0.0
@@ -110,6 +110,7 @@ class GaitCliDefaults:
     roll_p_hi_deg: float = 14.0
     imu_ema: float = 0.0
     swing_level: float = 0.0
+    rear_clearance_m: float = 0.0
 
 
 GAIT = GaitCliDefaults()
@@ -171,6 +172,7 @@ def soft_trot_shape_keys() -> frozenset:
         "swing_level",
         "swing_clearance_per_rad",
         "com_shift_m", "com_shift_blend",
+        "rear_clearance_m",
     })
 
 

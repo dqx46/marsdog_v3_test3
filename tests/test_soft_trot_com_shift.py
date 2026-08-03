@@ -20,12 +20,20 @@ from marsdog_control.motion.gait_recipes import NATURAL_SOFT_TROT_WBC  # noqa: E
 
 
 class SoftTrotComShiftTest(unittest.TestCase):
-    def test_recipe_enables_event_com_shift(self):
-        # Tuned amp (see scripts/tune_soft_trot_impedance.py); keep event-CoM on.
-        self.assertGreaterEqual(float(NATURAL_SOFT_TROT_WBC["com_shift_m"]), 0.012)
-        self.assertLessEqual(float(NATURAL_SOFT_TROT_WBC["com_shift_m"]), 0.020)
+    def test_recipe_defaults_impedance_overlays(self):
+        # Anti-bounce SoftTrot after 90/110 URDF: low lift + longer stance.
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["com_shift_m"]), 0.012)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["height"]), 0.25)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["step_h"]), 0.024)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["stance"]), 0.74)
         self.assertAlmostEqual(
             float(NATURAL_SOFT_TROT_WBC.get("lateral_sway", 0.0)), 0.0)
+        self.assertAlmostEqual(
+            float(NATURAL_SOFT_TROT_WBC.get("rear_clearance_m", 0.0)), 0.005)
+        self.assertAlmostEqual(
+            float(NATURAL_SOFT_TROT_WBC.get("spine_yaw_deg", 0.0)), 1.0)
+        self.assertAlmostEqual(
+            float(NATURAL_SOFT_TROT_WBC.get("front_foot_swing_track", 1.0)), 0.35)
 
     def test_controller_uses_event_com_not_half_sine(self):
         sway = 0.012

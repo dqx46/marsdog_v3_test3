@@ -21,6 +21,7 @@ from typing import Any, Optional
 from marsdog_control.apps.walk_cli import apply_preset_preserving_cli
 from marsdog_control.compat import ensure_legacy_path, project_root
 from marsdog_control.config.gait_tuning import GAIT, print_tuning_banner
+from marsdog_control.config.real_patches import print_patch_banner
 from marsdog_control.config.schema import RuntimeConfig
 from marsdog_control.motion.gait_recipes import (
     NATURAL_SOFT_TROT_REAL,
@@ -403,6 +404,7 @@ def prepare_walk_startup(
         step_h=gait.step_height_m,
         stance=gait.stance_ratio,
     )
+    print_patch_banner(args)
 
     bench_cfg = None
     bench_side = devtools.bench_tarsus_side or args.bench_tarsus_side

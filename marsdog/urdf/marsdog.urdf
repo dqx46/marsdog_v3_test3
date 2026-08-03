@@ -2490,11 +2490,11 @@
     </visual>
     <collision>
       <origin
-        xyz="0.0218 0.002037 -0.016968"
+        xyz="0.02655 0.002481 -0.02066"
         rpy="0 0 0" />
       <geometry>
         <box
-          size="0.005 0.035 0.06" />
+          size="0.005 0.035 0.073" />
       </geometry>
     </collision>
   </link>
@@ -2548,11 +2548,11 @@
     </visual>
     <collision>
       <origin
-        xyz="0.00202 -0.00848 -0.060938"
+        xyz="0.00202 -0.00848 -0.05493"
         rpy="0 0 0" />
       <geometry>
         <cylinder
-          length="0.072"
+          length="0.065"
           radius="0.016" />
       </geometry>
     </collision>
@@ -2571,7 +2571,7 @@
     name="fl_calf_joint"
     type="revolute">
     <origin
-      xyz="0.0235 0.0034955 -0.069995"
+      xyz="0.02861305 0.00425604 -0.08522429"
       rpy="0 0 0" />
     <parent
       link="fl_thigh_roll_link" />
@@ -2630,7 +2630,7 @@
     name="fl_tarsus_joint"
     type="revolute">
     <origin
-      xyz="0.0040403 -0.0022336 -0.12194"
+      xyz="0.003642077 -0.00201345 -0.1099213"
       rpy="0 0 0" />
     <parent
       link="fl_calf_link" />
@@ -2788,11 +2788,11 @@
     </visual>
     <collision>
       <origin
-        xyz="0.0218 -0.001963 -0.016968"
+        xyz="0.02655 -0.00239 -0.02066"
         rpy="0 0 0" />
       <geometry>
         <box
-          size="0.005 0.035 0.06" />
+          size="0.005 0.035 0.073" />
       </geometry>
     </collision>
   </link>
@@ -2846,11 +2846,11 @@
     </visual>
     <collision>
       <origin
-        xyz="0.00202 0.008554 -0.060938"
+        xyz="0.00202 0.008554 -0.05493"
         rpy="0 0 0" />
       <geometry>
         <cylinder
-          length="0.072"
+          length="0.065"
           radius="0.016" />
       </geometry>
     </collision>
@@ -2869,7 +2869,7 @@
     name="fr_calf_joint"
     type="revolute">
     <origin
-      xyz="0.02533 -0.0033053 -0.069363"
+      xyz="0.03084125 -0.00402446 -0.08445485"
       rpy="0 0 0" />
     <parent
       link="fr_thigh_roll_link" />
@@ -2928,7 +2928,7 @@
     name="fr_tarsus_joint"
     type="revolute">
     <origin
-      xyz="0.0055464 0.0025664 -0.12187"
+      xyz="0.004999904 0.002313528 -0.109862"
       rpy="0 0 0" />
     <parent
       link="fr_calf_link" />
