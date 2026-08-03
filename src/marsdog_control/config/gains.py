@@ -1,13 +1,14 @@
-"""Per-joint MIT gains in **brand-native** units + per-brand scales.
-
-Authoritative table for ``WalkRuntimeState`` / ``CommandExecutor``.
+"""Per-joint MIT gains: real brand-native table + sim SI impedance table.
 
 Design (2026-08):
-  - Numbers in ``JOINT_GAINS`` are what we intend to send (modulo phase /
-    jump overlay). Same anatomical L/R joints stay symmetric by default.
-  - Softening is **per brand** via ``BRAND_GAIN_SCALE``, never a global
-    ``leg_kp_scale`` across LZ/EVO/Incos/DM (their MIT kp/kd ranges differ).
-  - Tune Incos front calves with ``tests/Motor_test/bench_motor_track.py sine``.
+  - ``JOINT_GAINS``: real robot, brand-native MIT units (Incos/LZ/EVO/DM).
+    Softening is **per brand** via ``BRAND_GAIN_SCALE``, never a global
+    ``leg_kp_scale`` across brands.
+  - ``SIM_JOINT_GAINS``: MuJoCo SI impedance (τ=kp·Δq+kd·Δqd). Same numeric
+    brand-native kp is NOT the same physical stiffness in sim — keep a
+    separate table so real Incos sweeps (e.g. 35/2.5) do not soften sim roll.
+  - Tune real Incos with ``tests/Motor_test/bench_motor_track.py sine``.
+  - Tune sim legs for gait stability (esp. thigh_roll kd against trot rock).
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ BRAND_DEFAULT_GAINS: Dict[str, Dict[str, float]] = {
     "dm": {"kp": 30.0, "kd": 0.5},
 }
 
+# ── Real robot (brand-native MIT units) ──────────────────────────────
 # 2026-08: remove global leg_kp_scale=0.65. Prior effective ≈ table×0.65 for
 # LZ/EVO legs is baked in below so SoftTrot feel does not jump stiff overnight.
 # Incos calves: symmetric sweep start (was FL70/FR90 asymmetry); kd raised to
@@ -38,7 +40,7 @@ BRAND_DEFAULT_GAINS: Dict[str, Dict[str, float]] = {
 JOINT_GAINS = {
     "fl_hip_pitch":  {"kp": 100.0, "kd": 5.0, "trq_ff": 0.0},
     "fr_hip_pitch":  {"kp": 100.0, "kd": 5.0, "trq_ff": 0.0},
-        # Incos front (IDs 2/3/6/7): 2026-08-01 hang sine ±3° T=2s grid.
+    # Incos front (IDs 2/3/6/7): 2026-08-01 hang sine ±3° T=2s grid.
     # ENCOS V1.19 力位混控空载参考 KP≈15 KD≈0.5；协议 KP≤500 KD≤5。
     # 选 35/2.5：RMS 已接近 45 档、阻尼更足，L/R 同值（勿再 70 vs 90）。
     # trq_ff: 静态重力偏置(Nm)。外展轴重力臂≈0 → 0；小腿站姿需抗重力 → 非零。
@@ -65,6 +67,41 @@ JOINT_GAINS = {
     "waist_roll":    {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
 }
 
+# ── Simulation (MuJoCo SI impedance Nm/rad, Nm·s/rad) ────────────────
+# Do NOT copy JOINT_GAINS Incos 35/2.5 here — that softens sim roll and
+# tips SoftTrot. Baseline = last known-good sim impedance (pre brand-native
+# Incos sweep). Head/waist match real; legs keep harder SI stiffness.
+SIM_JOINT_GAINS = {
+    "fl_hip_pitch":  {"kp": 150.0, "kd": 5.0, "trq_ff": 0.0},
+    "fr_hip_pitch":  {"kp": 150.0, "kd": 5.0, "trq_ff": 0.0},
+    "fl_thigh_roll": {"kp": 80.0,  "kd": 5.0, "trq_ff": 0.0},
+    "fr_thigh_roll": {"kp": 90.0,  "kd": 5.0, "trq_ff": 0.0},
+    "fl_calf":       {"kp": 90.0,  "kd": 2.0, "trq_ff": 0.35},
+    "fr_calf":       {"kp": 90.0,  "kd": 2.0, "trq_ff": 0.40},
+    "fl_tarsus":     {"kp": 220.0, "kd": 10.0, "trq_ff": 0.0},
+    "fr_tarsus":     {"kp": 220.0, "kd": 10.0, "trq_ff": 0.0},
+    "rl_hip":        {"kp": 120.0, "kd": 10.0, "trq_ff": 0.0},
+    "rr_hip":        {"kp": 120.0, "kd": 10.0, "trq_ff": 0.0},
+    "rl_thigh":      {"kp": 140.0, "kd": 5.0, "trq_ff": 0.30},
+    "rr_thigh":      {"kp": 140.0, "kd": 5.0, "trq_ff": 0.30},
+    "rl_calf":       {"kp": 120.0, "kd": 5.0, "trq_ff": 0.45},
+    "rr_calf":       {"kp": 120.0, "kd": 5.0, "trq_ff": 0.45},
+    "head_pitch":    {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
+    "head_yaw":      {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
+    "head_roll":     {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
+    "neck_pitch":    {"kp": 30.0,  "kd": 5.0, "trq_ff": 0.0},
+    "waist_yaw":     {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
+    "waist_pitch":   {"kp": 60.0,  "kd": 5.0, "trq_ff": 0.0},
+    "waist_roll":    {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
+}
+
+
+def joint_gains_for(backend: str = "real") -> Dict[str, Dict[str, float]]:
+    """Return the gain table for ``real`` (brand-native) or ``sim`` (SI)."""
+    if backend == "sim":
+        return SIM_JOINT_GAINS
+    return JOINT_GAINS
+
 
 def brand_scales(mtype: str,
                  table: Mapping[str, Mapping[str, float]] | None = None,
@@ -88,6 +125,8 @@ __all__ = [
     "BRAND_GAIN_SCALE",
     "BRAND_DEFAULT_GAINS",
     "JOINT_GAINS",
+    "SIM_JOINT_GAINS",
     "brand_scales",
+    "joint_gains_for",
     "set_brand_kp_scale",
 ]

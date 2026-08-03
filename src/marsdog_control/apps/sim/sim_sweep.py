@@ -129,11 +129,12 @@ def run_episode(
     quiet: bool = True,
 ) -> Tuple[dict, SweepResult]:
     from marsdog_control.runtime.walk_startup import prepare_walk_startup
-    from marsdog_control.config.gains import JOINT_GAINS
+    from marsdog_control.config.gains import SIM_JOINT_GAINS
 
     args = _build_args()
     runtime_state = WalkRuntimeState()
-    startup = prepare_walk_startup(args, runtime_state=runtime_state, joint_gains=JOINT_GAINS)
+    startup = prepare_walk_startup(
+        args, runtime_state=runtime_state, joint_gains=SIM_JOINT_GAINS)
     runtime_state.dm.fixed_targets[4] = 0.0
     runtime_state.dm.fixed_targets[8] = 0.0
 

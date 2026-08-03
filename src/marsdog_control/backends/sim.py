@@ -25,11 +25,11 @@ import numpy as np
 
 from marsdog_control.config.joints import JOINT_MAP, JOINT_BY_ID, JOINT_BY_NAME
 from marsdog_control.core.types import ControlOutput, RobotState
-from marsdog_control.config.gains import JOINT_GAINS
+from marsdog_control.config.gains import SIM_JOINT_GAINS
 from marsdog_control.backends.base import RobotBackend
 from marsdog_control.motion.kinematics import clamp_urdf, urdf_limits
 
-# 未在 JOINT_GAINS 显式列出的关节回退增益 (与旧 motor_gains.DEFAULT_GAIN 一致)。
+# 未在 SIM_JOINT_GAINS 显式列出的关节回退增益 (与旧 motor_gains.DEFAULT_GAIN 一致)。
 DEFAULT_GAIN = {"kp": 30.0, "kd": 4.0, "trq_ff": 0.0}
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -194,7 +194,7 @@ def _print_actuator_calibration() -> None:
     print("[sim] MIT 力矩执行层 (τ = kp·Δq + kd·Δqd + trq_ff, URDF effort 饱和):")
     for j in JOINT_MAP:
         effort = _urdf_effort(j.name)
-        g = JOINT_GAINS.get(j.name, DEFAULT_GAIN)
+        g = SIM_JOINT_GAINS.get(j.name, DEFAULT_GAIN)
         sat_deg = math.degrees(effort / g["kp"]) if g["kp"] > 0 else 0.0
         print(
             f"  {j.name:16s} effort={effort:5.1f}Nm  "
@@ -304,7 +304,7 @@ def _build_physics_mjcf(physics: Optional[SimPhysicsOptions] = None) -> str:
 
     for j in JOINT_MAP:
         fmax = _urdf_effort(j.name)
-        g = JOINT_GAINS.get(j.name, DEFAULT_GAIN)
+        g = SIM_JOINT_GAINS.get(j.name, DEFAULT_GAIN)
         a = ET.SubElement(act_elem, "position")
         a.set("name", f"act_{j.name}")
         a.set("joint", f"{j.name}_joint")
@@ -625,7 +625,7 @@ class SimRobotBackend(RobotBackend):
             from marsdog_control.control.executor import resolve_gains
             kp, kd, trq = resolve_gains(
                 j, kp_scale, True, 0.0, 0.0, 0.0, 0.0,
-                leg_kp_scale, JOINT_GAINS, ps, to)
+                leg_kp_scale, SIM_JOINT_GAINS, ps, to)
 
             self.model.actuator_gainprm[aid, 0] = kp
             if self.model.actuator_gainprm.shape[1] > 1:

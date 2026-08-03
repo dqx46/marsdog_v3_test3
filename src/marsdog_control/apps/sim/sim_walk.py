@@ -152,7 +152,7 @@ def main():
     # 1. CLI / startup (先解析站高，再给 Sim 初始姿态)
     from marsdog_control.apps.walk_cli import parse_args
     from marsdog_control.runtime.walk_startup import prepare_walk_startup as _prepare_walk_startup
-    from marsdog_control.config.gains import JOINT_GAINS
+    from marsdog_control.config.gains import SIM_JOINT_GAINS
 
     old_argv = sys.argv
     # 保留用户透传 flag。默认: natural_soft_trot；若用户要 WBC 则不再强塞 VMC。
@@ -250,7 +250,11 @@ def main():
     sys.argv = old_argv
 
     runtime_state = WalkRuntimeState()
-    startup = _prepare_walk_startup(args, runtime_state=runtime_state, joint_gains=JOINT_GAINS)
+    startup = _prepare_walk_startup(
+        args, runtime_state=runtime_state, joint_gains=SIM_JOINT_GAINS)
+    print(
+        "[Sim] using SIM_JOINT_GAINS (SI impedance; real Incos 35/2.5 not applied)"
+    )
 
     # 仿真侧：达妙无真实反馈，用固定目标占位，避免 status 误报 disabled
     runtime_state.dm.fixed_targets[4] = 0.0

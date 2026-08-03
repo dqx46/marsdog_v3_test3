@@ -11,6 +11,8 @@ from marsdog_control.config.gains import (
     BRAND_DEFAULT_GAINS,
     BRAND_GAIN_SCALE,
     JOINT_GAINS,
+    SIM_JOINT_GAINS,
+    joint_gains_for,
 )
 from marsdog_control.config.legacy_bridge import apply_runtime_config_to_legacy_args
 from marsdog_control.config.loader import runtime_config_from_args
@@ -53,6 +55,8 @@ __all__ = [
     "BRAND_DEFAULT_GAINS",
     "BRAND_GAIN_SCALE",
     "JOINT_GAINS",
+    "SIM_JOINT_GAINS",
+    "joint_gains_for",
     "LoggingConfig",
     "RuntimeConfig",
     "SafetyConfig",

@@ -305,6 +305,8 @@ def prepare_walk_startup(
         wbc_enabled=features.wbc_enabled,
     )
     from marsdog_control.config.gains import BRAND_GAIN_SCALE, JOINT_GAINS
+    # Prefer the table wired into this session (sim → SIM_JOINT_GAINS).
+    active_gains = runtime_state.joint_gains or JOINT_GAINS
     print(
         "[gains] brand scales "
         + ", ".join(
@@ -312,11 +314,13 @@ def prepare_walk_startup(
             for m, s in BRAND_GAIN_SCALE.items()
         )
     )
-    fc, rc = JOINT_GAINS.get("fl_calf", {}), JOINT_GAINS.get("fr_calf", {})
+    fc, rc = active_gains.get("fl_calf", {}), active_gains.get("fr_calf", {})
+    fr = active_gains.get("fl_thigh_roll", {})
     print(
-        f"[gains] Incos calf L/R = "
+        f"[gains] active calf L/R = "
         f"{fc.get('kp', float('nan')):.0f}/{fc.get('kd', float('nan')):.1f} | "
         f"{rc.get('kp', float('nan')):.0f}/{rc.get('kd', float('nan')):.1f} "
+        f"thigh_roll={fr.get('kp', float('nan')):.0f}/{fr.get('kd', float('nan')):.1f} "
         f"(leg_kp_scale overlay={runtime_state.leg_kp_scale:.2f})"
     )
     if abs(runtime_state.leg_kp_scale - 1.0) > 1e-6:
