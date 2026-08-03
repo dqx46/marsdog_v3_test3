@@ -34,7 +34,6 @@ class SoftTrotComShiftTest(unittest.TestCase):
             float(NATURAL_SOFT_TROT_WBC.get("spine_yaw_deg", 0.0)), 0.0)
         self.assertAlmostEqual(
             float(NATURAL_SOFT_TROT_WBC.get("front_foot_swing_track", 1.0)), 1.0)
-        self.assertFalse(bool(NATURAL_SOFT_TROT_WBC.get("auto_trim", True)))
         self.assertAlmostEqual(
             float(NATURAL_SOFT_TROT_WBC.get("swing_level", 1.0)), 0.0)
 

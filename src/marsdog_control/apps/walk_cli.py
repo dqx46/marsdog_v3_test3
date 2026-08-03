@@ -146,7 +146,8 @@ def parse_args():
     p.add_argument("--trim-phases", type=int, default=CLI.trim_phases,
                    help="[AT·已移除] 兼容保留, 无效果")
     p.add_argument("--imu-predict-ms", type=float, default=CLI.imu_predict_ms,
-                   help="[PRED] 执行器额外提前量(ms); 正式 NaturalSoftTrot 默认10; 总预测还会加当前 angle age")
+                   help="[PRED] 执行器额外提前量(ms); SoftTrot 预设为 0; "
+                        "总预测还会加当前 angle age")
     p.add_argument("--imu-predict-max-ms", type=float, default=CLI.imu_predict_max_ms,
                    help="[PRED] 数据年龄+执行提前量的总上限(ms), 默认80")
     p.add_argument("--imu-gyro-max-age-ms", type=float, default=CLI.imu_gyro_max_age_ms,
@@ -160,8 +161,8 @@ def parse_args():
     p.add_argument("--imu-kp", type=float, default=CLI.imu_kp,
                    help="[IMU] 覆盖姿态 P 增益 kp(roll&pitch), 0=用内置默认0.03; 配合预测可抬到0.05-0.08")
     p.add_argument("--imu-softstart-s", type=float, default=CLI.imu_softstart_s,
-                   help="[SS] IMU修正软启动: 步态启动/重触发后, 修正权限在该时间内0→1平滑拉起, "
-                        "期间冻结积分与auto-trim, 消除起步'起飞'(默认1.5; 0=关)")
+                   help="[SS] IMU修正软启动: 步态启动/重触发后, 修正权限在该时间内0→1平滑拉起 "
+                        "(SoftTrot/schema 默认 0=关; 非零时消除起步'起飞')")
     p.add_argument("--bwd-period",  type=float, default=GAIT.bwd_period,
                    help="后退步态周期 (s), 默认 0.85")
     p.add_argument("--fwd-use-bwd", action=argparse.BooleanOptionalAction, default=GAIT.fwd_use_bwd,
@@ -171,7 +172,7 @@ def parse_args():
                    help="横向重心摆动幅度 (m), 半正弦旧法; SoftTrot 有 --com-shift 时忽略")
     p.add_argument("--com-shift", type=float, default=GAIT.com_shift_m,
                    dest="com_shift_m", metavar="M",
-                   help="[位控·质心] SoftTrot 横向移重 (m); 菜谱默认 0.016, 0=关; "
+                   help="[位控·质心] SoftTrot 横向移重 (m); NATURAL_SOFT_TROT 默认 0.012, 0=关; "
                         "正=FL+RR→右; --sim-parity 会关掉")
     p.add_argument("--com-shift-blend", type=float, default=GAIT.com_shift_blend,
                    dest="com_shift_blend", metavar="PHASE",
@@ -236,8 +237,8 @@ def parse_args():
     p.add_argument("--no-spine", action="store_true",
                    help="[NaturalTrot] 关闭脊柱律动(spine_yaw/roll=0), 首次上机安全验证用")
     p.add_argument("--trot-preview", action="store_true",
-                   help="应用 MuJoCo sim-preview --trot 验证配方 (步态+IMU; 保留实机柔顺/重力补偿/auto-trim)")
-    # ── NaturalTrot/NaturalSoftTrot 专用形状参数 (未给时用 gait_recipes 的 REAL 预设覆盖) ──
+                   help="应用 MuJoCo sim-preview --trot 验证配方 (步态+IMU; 保留柔顺/重力补偿)")
+    # ── NaturalTrot/NaturalSoftTrot 形状; SoftTrot 未显式给时灌 NATURAL_SOFT_TROT ──
     p.add_argument("--nat-period", type=float, default=GAIT.nat_period,
                    help="Natural/SoftTrot 周期 (s); SoftTrot 推荐改用 --gait-period/--gait-hz")
     p.add_argument("--nat-amp-front", type=float, default=GAIT.nat_amp_front)
@@ -326,8 +327,8 @@ def parse_args():
     # ── E: 落地冲击抑制 (IMU 机制保护) ──
     p.add_argument("--td-imu-freeze-i", action=argparse.BooleanOptionalAction,
                    default=False,
-                   help="[E] 触地窗口冻结IMU积分; SoftTrot 预设常开, "
-                        "--no-td-imu-freeze-i 关; --sim-parity 默认关")
+                   help="[E] 触地窗口冻结IMU积分; SoftTrot 预设默认关; "
+                        "--td-imu-freeze-i 开; --sim-parity 亦关")
     p.add_argument("--imu-slew-mm-s", type=float, default=CLI.imu_slew_mm_s,
                    help="[E] IMU校正斜率限制(mm/s), 0=关闭; 建议 120~300")
     p.add_argument("--load-trim-cal", action=argparse.BooleanOptionalAction,
@@ -338,8 +339,8 @@ def parse_args():
                    help="[AT·已移除] 不再保存 trim_cal.json; 开关保留兼容")
     p.add_argument(
         "--sim-parity", action=argparse.BooleanOptionalAction, default=False,
-        help="[研究] 关闭叠加补偿: IMU学习/门控/预测/软启动、达妙 lead/dq_ff、"
-             "trim 读写、anti_roll/sway/roll_ff、com_shift/spine/rear_clearance/"
+        help="[研究] 关闭叠加补偿: IMU门控/预测/软启动、达妙 lead/dq_ff、"
+             "anti_roll/sway/roll_ff、com_shift/spine/rear_clearance/"
              "flourish 等。保留 period/amp/step_h/touchdown_compress。"
              "单项可用显式 --flag 再打开做 A/B",
     )

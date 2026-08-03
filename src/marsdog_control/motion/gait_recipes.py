@@ -574,37 +574,38 @@ NATURAL_TROT_REAL = {
 }
 
 
-# 实机 NaturalSoftTrot 预设 —— **步态形状/手感的唯一真源**。
-# 调 SoftTrot：只改本 dict（见 config/gait_tuning.py 入口说明）。
-# 2026-08 对齐清理：横向只留 com_shift；关 anti_roll/sway/roll_ff/spine/flourish/
-# IMU 预测门控/达妙 lead 等互殴叠层。auto-trim 已从代码路径移除。
-NATURAL_SOFT_TROT_REAL = {
+# SoftTrot **唯一真源**（仿真/真机 walk_startup 只灌这一份）。
+# 调参：只改本 dict。勿再维护 REAL/WBC 两套几何。
+# 横向只留 com_shift；IMU lead/spine/flourish 等互殴叠层默认全关。
+NATURAL_SOFT_TROT = {
     # ── 体高 / 节奏 / 支撑相 ──
-    "height": 0.24,
-    "period": 0.90,
-    "nat_period": 0.90,
-    "stance": 0.66,
-    "amp_front": 0.026,
-    "amp_rear": 0.026,
-    "nat_amp_front": 0.026,
-    "nat_amp_rear": 0.026,
-    "step_h": 0.040,
-    "nat_step_h": 0.040,
-    "step_h_front": 0.040,
-    "fwd_front_lift": 0.040,
-    # ── 核心足端形状（非叠加补丁）──
-    "touchdown_compress": 0.004,
+    "height": 0.25,
+    "period": 1.20,
+    "nat_period": 1.20,
+    "stance": 0.74,
+    "amp_front": 0.022,
+    "amp_rear": 0.030,
+    "nat_amp_front": 0.022,
+    "nat_amp_rear": 0.030,
+    "step_h": 0.024,
+    "nat_step_h": 0.024,
+    "step_h_front": 0.020,
+    "fwd_front_lift": 0.020,
+    "fwd_front_amp_scale": 1.0,
+    # ── 核心足端形状 ──
+    "touchdown_compress": 0.006,
     "anti_roll_soft_scale": 0.0,
-    "toeoff_lift": 0.002,
-    "retract_peak": 0.36,
-    "lift_peak": 0.42,
+    "toeoff_lift": 0.0008,
+    "retract_peak": 0.42,
+    "lift_peak": 0.48,
     "thigh_swing_front_deg": 0.0,
     "thigh_swing_rear_deg": 0.0,
-    "retract_front": 0.018,
-    "retract_rear": 0.014,
+    "retract_front": 0.010,
+    "retract_rear": 0.008,
     "tarsus_swing_deg": 0.0,
     "swing_clearance_per_rad": 0.35,
-    "com_shift_m": 0.0,
+    # ── 横向唯一策略 ──
+    "com_shift_m": 0.012,
     "com_shift_blend": 0.12,
     "rear_clearance_m": 0.0,
     "swing_level": 0.0,
@@ -617,6 +618,7 @@ NATURAL_SOFT_TROT_REAL = {
     "front_stand_foot_pitch_deg": -90.0,
     "spine_yaw_deg": 0.0,
     "spine_roll_deg": 0.0,
+    "throttle_min_scale": 0.45,
     # ── 互殴叠层：全部关 ──
     "lateral_sway": 0.0,
     "anti_roll": 0.0,
@@ -625,9 +627,6 @@ NATURAL_SOFT_TROT_REAL = {
     "trot_roll_ff_neg_deg": 0.0,
     "trot_roll_ff_pos_deg": 0.0,
     "ff_decouple": False,
-    "auto_trim": False,
-    "load_trim_cal": False,
-    "save_trim_cal": False,
     "imu_kp": 0.040,
     "imu_kp_pitch": 0.040,
     "max_corr_mm": 14.0,
@@ -642,48 +641,7 @@ NATURAL_SOFT_TROT_REAL = {
     "tarsus_lead_fl_ms": 0.0,
     "tarsus_lead_fr_ms": 0.0,
     "dm_dq_feedforward": False,
-}
-
-# SoftTrot 统一几何（仿真/真机 walk_startup 灌此 dict；含无 WBC 阻抗基线）。
-# 体高 0.25 + T=1.20 + amp2.2/3.0；横向唯一策略 com_shift=12mm。
-NATURAL_SOFT_TROT_WBC = {
-    **NATURAL_SOFT_TROT_REAL,
-    "height": 0.25,
-    "amp_front": 0.022,
-    "amp_rear": 0.030,
-    "nat_amp_front": 0.022,
-    "nat_amp_rear": 0.030,
-    "step_h": 0.024,
-    "nat_step_h": 0.024,
-    "step_h_front": 0.020,
-    "fwd_front_lift": 0.020,
-    "period": 1.20,
-    "nat_period": 1.20,
-    "stance": 0.74,
-    "fwd_front_amp_scale": 1.0,
-    "com_shift_m": 0.012,
-    "com_shift_blend": 0.12,
-    "lateral_sway": 0.0,
-    "anti_roll": 0.0,
-    "trot_roll_ff_neg_deg": 0.0,
-    "trot_roll_ff_pos_deg": 0.0,
-    "anti_roll_soft_scale": 0.0,
-    "retract_front": 0.010,
-    "retract_rear": 0.008,
-    "retract_peak": 0.42,
-    "lift_peak": 0.48,
-    "toeoff_lift": 0.0008,
-    "touchdown_compress": 0.006,
-    "front_foot_swing_track": 1.0,
-    "front_foot_stance_push_deg": 0.0,
-    "swing_level": 0.0,
-    "thigh_swing_front_deg": 0.0,
-    "thigh_swing_rear_deg": 0.0,
-    "spine_yaw_deg": 0.0,
-    "spine_roll_deg": 0.0,
-    "throttle_min_scale": 0.45,
-    "rear_clearance_m": 0.0,
-    # Spot-turn / cruise turn: abduction Y is primary; amp_diff only for curved walk
+    # Spot-turn / cruise turn
     "turn_y_amp": 0.040,
     "turn_amp_diff": 0.012,
     "turn_waist_yaw": 0.40,
@@ -693,6 +651,10 @@ NATURAL_SOFT_TROT_WBC = {
     "swing_foot_kp": 70.0,
     "com_y_shift_m": 0.0,
 }
+
+# 历史别名：同一对象，禁止再写第二套几何。
+NATURAL_SOFT_TROT_WBC = NATURAL_SOFT_TROT
+NATURAL_SOFT_TROT_REAL = NATURAL_SOFT_TROT
 
 # 真狗四拍慢走 — 与 SoftTrot 完全解耦；只改本 dict，勿动 NATURAL_SOFT_TROT_*。
 # 抬腿序 LH→LF→RH→RF；可读走速（非爬行）+ 事件型侧移 + 自有足端曲线。

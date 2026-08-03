@@ -39,7 +39,7 @@ class FeatureFlags:
     gamepad_enabled: bool = True
     logging_enabled: bool = True
     dm_tarsus_active: bool = True
-    dm_dq_feedforward_enabled: bool = True
+    dm_dq_feedforward_enabled: bool = False
     ff_decouple_enabled: bool = False
     smooth_gait_enabled: bool = False
 
@@ -52,13 +52,13 @@ class HardwareConfig:
 
 @dataclass(frozen=True)
 class GaitConfig:
-    body_height_m: float = 0.24
-    period_s: float = 0.75
-    step_height_m: float = 0.020
-    front_step_height_m: Optional[float] = None
-    amp_front_m: float = 0.018
-    amp_rear_m: float = 0.022
-    stance_ratio: float = 0.66
+    body_height_m: float = 0.25
+    period_s: float = 1.20
+    step_height_m: float = 0.024
+    front_step_height_m: Optional[float] = 0.020
+    amp_front_m: float = 0.022
+    amp_rear_m: float = 0.030
+    stance_ratio: float = 0.74
     hip_abduction_rad: float = 0.08
     ramp_s: float = 3.5
     fade_s: float = 3.0
@@ -123,17 +123,17 @@ class DynamicsConfig:
 
 @dataclass(frozen=True)
 class ImuConfig:
-    predict_s: float = 0.010
+    predict_s: float = 0.0
     predict_max_s: float = 0.080
     gyro_max_age_s: float = 0.030
-    dynamic_predict_enabled: bool = True
+    dynamic_predict_enabled: bool = False
     angle_tau_s: float = 0.025
     gyro_tau_s: float = 0.015
     kp: float = 0.05
-    softstart_s: float = 1.5
+    softstart_s: float = 0.0
     roll_trim_m: float = 0.0
     pitch_trim_m: float = 0.0
-    # auto-trim/ILC 整机调平学习已移除（sim↔real 对齐噪声源）；字段保留仅兼容 CLI。
+    # auto-trim/ILC 整机调平学习已移除；字段保留仅兼容 CLI。
     auto_trim_enabled: bool = False
     auto_trim_rate_m_rad_s: float = 0.08
     auto_trim_limit_m: float = 0.012
@@ -156,8 +156,8 @@ class DmTarsusConfig:
     kp_fr: float = 220.0
     kd_fl: float = 10.0
     kd_fr: float = 10.0
-    lead_fl_s: float = 0.040
-    lead_fr_s: float = 0.050
+    lead_fl_s: float = 0.0
+    lead_fr_s: float = 0.0
     lead_max_rad: float = deg_to_rad(3.0)
     dq_max_rad_s: float = 3.0
 

@@ -28,10 +28,6 @@ PATCHES: Tuple[PatchSpec, ...] = (
         parity_value=False, kind="bool",
     ),
     PatchSpec(
-        "auto_trim", "auto-trim/ILC(已移除)", "auto_trim", "imu",
-        parity_value=False, kind="bool",
-    ),
-    PatchSpec(
         "imu_softstart", "IMU软启动", "imu_softstart_s", "imu",
         parity_value=0.0, kind="nonzero",
     ),
@@ -120,14 +116,6 @@ PATCHES: Tuple[PatchSpec, ...] = (
         "stance_push", "支撑蹬地角push", "front_foot_stance_push_deg",
         "gait_overlay",
         parity_value=0.0, kind="abs_nonzero",
-    ),
-    PatchSpec(
-        "load_trim_cal", "加载trim标定(已移除)", "load_trim_cal", "persistence",
-        parity_value=False, kind="bool",
-    ),
-    PatchSpec(
-        "save_trim_cal", "保存trim标定(已移除)", "save_trim_cal", "persistence",
-        parity_value=False, kind="bool",
     ),
 )
 

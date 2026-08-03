@@ -23,6 +23,7 @@ from marsdog_control.config.schema import RuntimeConfig  # noqa: E402
 from marsdog_control.core.units import deg_to_rad, mm_to_m, ms_to_s  # noqa: E402
 
 # Schema field expectations (authoritative numbers live in schema.py).
+# SoftTrot-aligned defaults: lead/predict/dq_ff off; geometry matches NATURAL_SOFT_TROT.
 _SCHEMA_DEFAULTS = [
     ("features", "imu_enabled", False),
     ("features", "imu_feedback_enabled", False),
@@ -34,15 +35,15 @@ _SCHEMA_DEFAULTS = [
     ("features", "gamepad_enabled", True),
     ("features", "logging_enabled", True),
     ("features", "dm_tarsus_active", True),
-    ("features", "dm_dq_feedforward_enabled", True),
+    ("features", "dm_dq_feedforward_enabled", False),
     ("features", "ff_decouple_enabled", False),
     ("features", "smooth_gait_enabled", False),
-    ("gait", "body_height_m", 0.24),
-    ("gait", "period_s", 0.75),
-    ("gait", "step_height_m", 0.020),
-    ("gait", "amp_front_m", 0.018),
-    ("gait", "amp_rear_m", 0.022),
-    ("gait", "stance_ratio", 0.66),
+    ("gait", "body_height_m", 0.25),
+    ("gait", "period_s", 1.20),
+    ("gait", "step_height_m", 0.024),
+    ("gait", "amp_front_m", 0.022),
+    ("gait", "amp_rear_m", 0.030),
+    ("gait", "stance_ratio", 0.74),
     ("gait", "hip_abduction_rad", 0.08),
     ("gait", "ramp_s", 3.5),
     ("gait", "fade_s", 3.0),
@@ -58,13 +59,13 @@ _SCHEMA_DEFAULTS = [
     ("control", "yaw_hold_kp", 0.03),
     ("control", "yaw_hold_kd", 0.010),
     ("control", "yaw_hold_limit", 0.4),
-    ("imu", "predict_s", ms_to_s(10.0)),
+    ("imu", "predict_s", 0.0),
     ("imu", "predict_max_s", ms_to_s(80.0)),
     ("imu", "gyro_max_age_s", ms_to_s(30.0)),
     ("imu", "angle_tau_s", ms_to_s(25.0)),
     ("imu", "gyro_tau_s", ms_to_s(15.0)),
     ("imu", "kp", 0.05),
-    ("imu", "softstart_s", 1.5),
+    ("imu", "softstart_s", 0.0),
     ("imu", "auto_trim_rate_m_rad_s", 0.08),
     ("imu", "auto_trim_limit_m", mm_to_m(12.0)),
     ("imu", "trim_phases", 1),
@@ -77,8 +78,8 @@ _SCHEMA_DEFAULTS = [
     ("dm_tarsus", "kp_fr", 220.0),
     ("dm_tarsus", "kd_fl", 10.0),
     ("dm_tarsus", "kd_fr", 10.0),
-    ("dm_tarsus", "lead_fl_s", ms_to_s(40.0)),
-    ("dm_tarsus", "lead_fr_s", ms_to_s(50.0)),
+    ("dm_tarsus", "lead_fl_s", 0.0),
+    ("dm_tarsus", "lead_fr_s", 0.0),
     ("dm_tarsus", "lead_max_rad", deg_to_rad(3.0)),
     ("dm_tarsus", "dq_max_rad_s", 3.0),
 ]
@@ -96,10 +97,10 @@ class SchemaDefaultsTest(unittest.TestCase):
         self.assertFalse(mismatches, msg="\n".join(mismatches))
 
     def test_cli_helper_mirrors_schema(self):
-        self.assertAlmostEqual(CLI.height, 0.24)
+        self.assertAlmostEqual(CLI.height, 0.25)
         self.assertAlmostEqual(CLI.dm_kp_fl, 220.0)
         self.assertAlmostEqual(CLI.max_corr_mm, 20.0)
-        self.assertAlmostEqual(CLI.tarsus_lead_fl_ms, 40.0)
+        self.assertAlmostEqual(CLI.tarsus_lead_fl_ms, 0.0)
         self.assertTrue(CLI.natural_soft_trot)
         self.assertTrue(CLI.gravity_comp)
 

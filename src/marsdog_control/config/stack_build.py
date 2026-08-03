@@ -5,7 +5,7 @@ IMU factories consume these frozen dataclasses instead of digging into ``args``
 field-by-field. Hot-path code (``RuntimeStateMachine``) never sees a Namespace.
 
 Gait-only argparse fallbacks come from ``config.gait_tuning.GAIT`` (shared with
-``walk_cli``). SoftTrot shape is applied via ``NATURAL_SOFT_TROT_REAL`` before
+``walk_cli``). SoftTrot shape is applied via ``NATURAL_SOFT_TROT`` before
 ``from_args``.
 """
 

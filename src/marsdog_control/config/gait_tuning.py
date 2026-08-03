@@ -3,11 +3,13 @@
 Operator cheat-sheet
 --------------------
 1. **Natural Soft Trot 形状/手感** (period / amp / step / foot track / soft shape)
-   → ``motion/gait_recipes.py`` 里的 ``NATURAL_SOFT_TROT_REAL``
+   → ``motion/gait_recipes.py`` 里的 ``NATURAL_SOFT_TROT``
+   （``NATURAL_SOFT_TROT_WBC`` / ``_REAL`` 是同一对象别名）。
    启动时会灌进 CLI args（显式 ``--flag`` 优先保留）。
 
 2. **全局增益 / DM / IMU / features** (leg_kp、dm_kp、imu_kp…)
    → ``config/schema.py``（CLI 经 ``defaults.CLI`` 跟随）。
+   SoftTrot 预设会覆盖 lead/predict 等为 0。
 
 3. **仅本次试验的覆盖**
    → 命令行 ``--flag``（记入 ``_explicit_cli``，不被预设盖掉）。
@@ -15,8 +17,7 @@ Operator cheat-sheet
    （同时覆盖 ``period`` / ``nat_period``）。
 
 ``GaitCliDefaults`` 是 **未进 RuntimeConfig** 的步态细参 argparse 默认值单点；
-``GaitStackConfig.from_args`` 的 fallback 也读这里，避免 CLI / stack 魔法数各写一份。
-SoftTrot 形状键与 ``NATURAL_SOFT_TROT_REAL`` 对齐（见 ``tests/test_gait_tuning_sync.py``）。
+形状键与 ``NATURAL_SOFT_TROT`` 对齐（见 ``tests/test_gait_tuning_sync.py``）。
 """
 
 from __future__ import annotations
@@ -37,28 +38,28 @@ class GaitCliDefaults:
     front_stand_foot_pitch_deg: float = -90.0
     front_stand_tarsus_deg: float = 0.0
 
-    # forward / thrust / foot
-    fwd_front_lift: float = 0.018
-    fwd_front_amp_scale: float = 0.6
+    # forward / thrust / foot — SoftTrot SSOT aligned
+    fwd_front_lift: float = 0.020
+    fwd_front_amp_scale: float = 1.0
     fwd_use_bwd: bool = False
     front_thrust_gain: float = 1.0
     front_thrust_swing_gain: float = 1.0
     front_tarsus_push: float = 0.0
     front_foot_track_deg: float = -78.0
-    front_foot_stance_push_deg: float = 10.0
-    front_foot_swing_track: float = 0.0
+    front_foot_stance_push_deg: float = 0.0
+    front_foot_swing_track: float = 1.0
     swing_clearance_per_rad: float = 0.35
     reactive_kp: float = 0.0
     reactive_kd: float = 0.0
     lateral_sway: float = 0.0
     # SoftTrot 横向质心规划 (m); >0 时用事件型移重，覆盖 half-sine lateral_sway
-    com_shift_m: float = 0.0
+    com_shift_m: float = 0.012
     com_shift_blend: float = 0.12
-    anti_roll: float = 0.010
-    trot_roll_ff_neg_deg: float = 1.2
-    trot_roll_ff_pos_deg: float = 1.0
-    anti_roll_asym_neg: float = 1.05
-    anti_roll_asym_pos: float = 0.98
+    anti_roll: float = 0.0
+    trot_roll_ff_neg_deg: float = 0.0
+    trot_roll_ff_pos_deg: float = 0.0
+    anti_roll_asym_neg: float = 1.0
+    anti_roll_asym_pos: float = 1.0
 
     # backward / pace
     bwd_amp_scale: float = 0.7
@@ -71,35 +72,35 @@ class GaitCliDefaults:
     pace_hip_abd: float = 0.0
     pace_sway: float = 0.015
 
-    # natural shape — aligned with NATURAL_SOFT_TROT_REAL (soft is default gait)
-    nat_period: float = 0.90
-    nat_amp_front: float = 0.026
-    nat_amp_rear: float = 0.026
-    nat_step_h: float = 0.040
+    # natural shape — aligned with NATURAL_SOFT_TROT
+    nat_period: float = 1.20
+    nat_amp_front: float = 0.022
+    nat_amp_rear: float = 0.030
+    nat_step_h: float = 0.024
     spine_yaw_deg: float = 0.0
     spine_roll_deg: float = 0.0
     spine_phase_deg: float = 0.0
     thigh_swing_front_deg: float = 0.0
-    thigh_swing_rear_deg: float = 12.0
-    retract_front: float = 0.018
-    retract_rear: float = 0.014
+    thigh_swing_rear_deg: float = 0.0
+    retract_front: float = 0.010
+    retract_rear: float = 0.008
     tarsus_swing_deg: float = 0.0
-    touchdown_compress: float = 0.004
-    anti_roll_soft_scale: float = 0.35
-    toeoff_lift: float = 0.002
-    retract_peak: float = 0.36
-    lift_peak: float = 0.42
+    touchdown_compress: float = 0.006
+    anti_roll_soft_scale: float = 0.0
+    toeoff_lift: float = 0.0008
+    retract_peak: float = 0.42
+    lift_peak: float = 0.48
 
     # turn layer
-    turn_amp_diff: float = 0.020
-    turn_y_amp: float = 0.025
+    turn_amp_diff: float = 0.012
+    turn_y_amp: float = 0.040
     turn_smooth: float = 0.015
-    turn_waist_yaw: float = 0.35
+    turn_waist_yaw: float = 0.40
     waist_yaw_turn_sign: float = 1.0
     cruise_turn_scale: float = 0.6
     cruise_turn_yamp: float = 1.0
     turn_sign: float = 1.0
-    throttle_min_scale: float = 0.5
+    throttle_min_scale: float = 0.45
 
     # misc experimental (still gait-adjacent CLI)
     damp_hard_mm: float = 3.0
@@ -147,7 +148,7 @@ def print_tuning_banner(
     print(f"{'-'*62}")
     print("  调参入口（单源，不要两边改）:")
     if natural_soft or natural_active:
-        print("    [形状] motion/gait_recipes.py → NATURAL_SOFT_TROT_REAL"
+        print("    [形状] motion/gait_recipes.py → NATURAL_SOFT_TROT"
               if natural_soft else
               "    [形状] motion/gait_recipes.py → NATURAL_TROT_REAL")
     print("    [增益/DM/IMU] config/schema.py  (CLI 自动跟随)")

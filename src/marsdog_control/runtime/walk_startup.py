@@ -24,8 +24,7 @@ from marsdog_control.config.gait_tuning import GAIT, print_tuning_banner
 from marsdog_control.config.real_patches import print_patch_banner
 from marsdog_control.config.schema import RuntimeConfig
 from marsdog_control.motion.gait_recipes import (
-    NATURAL_SOFT_TROT_REAL,
-    NATURAL_SOFT_TROT_WBC,
+    NATURAL_SOFT_TROT,
     NATURAL_TROT_REAL,
     NATURAL_WALK_REAL,
     NATURAL_WALK_WBC,
@@ -187,11 +186,10 @@ def prepare_walk_startup(
     if natural_active:
         print("[tarsus] 约定: 上电前已手动掰到达妙硬限位零点(无 CLI 确认开关)")
 
-    # SoftTrot 预设仍灌进 args（默认路径）；Walk/Jump 用独立 params，不覆盖 SoftTrot 配方数字。
-    # SoftTrot 统一用 NATURAL_SOFT_TROT_WBC 大步几何（amp/period/stance），
-    # 不再因未开 --wbc 退回 REAL 小碎步；--wbc 只切换控制器(WBC+MPC vs VMC)。
+    # SoftTrot 唯一真源 NATURAL_SOFT_TROT（WBC/REAL 别名同对象）。
+    # --wbc 只切换控制器(WBC+MPC vs 阻抗)，不切换几何。
     if natural_soft:
-        natural_params = dict(NATURAL_SOFT_TROT_WBC)
+        natural_params = dict(NATURAL_SOFT_TROT)
     else:
         natural_params = dict(NATURAL_TROT_REAL)
     print(

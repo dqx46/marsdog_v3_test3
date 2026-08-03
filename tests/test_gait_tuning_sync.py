@@ -10,7 +10,7 @@ for _p in (_ROOT, os.path.join(_ROOT, "src")):
         sys.path.insert(0, _p)
 
 from marsdog_control.config.gait_tuning import GAIT, soft_trot_shape_keys  # noqa: E402
-from marsdog_control.motion.gait_recipes import NATURAL_SOFT_TROT_REAL  # noqa: E402
+from marsdog_control.motion.gait_recipes import NATURAL_SOFT_TROT  # noqa: E402
 
 
 class SoftTrotShapeSyncTest(unittest.TestCase):
@@ -18,18 +18,26 @@ class SoftTrotShapeSyncTest(unittest.TestCase):
         keys = soft_trot_shape_keys()
         mismatches = []
         for key in sorted(keys):
-            if key not in NATURAL_SOFT_TROT_REAL:
-                mismatches.append(f"{key}: missing from NATURAL_SOFT_TROT_REAL")
+            if key not in NATURAL_SOFT_TROT:
+                mismatches.append(f"{key}: missing from NATURAL_SOFT_TROT")
                 continue
-            expected = NATURAL_SOFT_TROT_REAL[key]
+            expected = NATURAL_SOFT_TROT[key]
             actual = getattr(GAIT, key)
             if actual != expected:
                 mismatches.append(
-                    f"{key}: GAIT={actual!r} vs NATURAL_SOFT_TROT_REAL={expected!r}")
+                    f"{key}: GAIT={actual!r} vs NATURAL_SOFT_TROT={expected!r}")
         self.assertFalse(
             mismatches,
-            msg="GaitCliDefaults 与 SoftTrot 预设漂移，请只改 NATURAL_SOFT_TROT_REAL "
+            msg="GaitCliDefaults 与 SoftTrot 预设漂移，请只改 NATURAL_SOFT_TROT "
                 "后同步 GAIT 默认：\n" + "\n".join(mismatches))
+
+    def test_soft_trot_aliases_are_same_object(self):
+        from marsdog_control.motion.gait_recipes import (
+            NATURAL_SOFT_TROT_REAL,
+            NATURAL_SOFT_TROT_WBC,
+        )
+        self.assertIs(NATURAL_SOFT_TROT, NATURAL_SOFT_TROT_WBC)
+        self.assertIs(NATURAL_SOFT_TROT, NATURAL_SOFT_TROT_REAL)
 
 
 if __name__ == "__main__":
