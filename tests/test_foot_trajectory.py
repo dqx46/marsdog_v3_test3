@@ -98,6 +98,52 @@ class AntiRollAndLateralTest(unittest.TestCase):
         self.assertEqual(ft.trot_weight_shift_sign(0.2, blend=0.10), -1.0)
         self.assertEqual(ft.trot_weight_shift_sign(0.7, blend=0.10), 1.0)
 
+    def test_trot_weight_shift_wrap_matches_mid_duration(self):
+        """Wrap blend must be 2·w (same as mid), finishing at −1 by phase=0."""
+        w = 0.10
+        # Mid switch spans [0.4, 0.6]; wrap spans [0.8, 1.0]
+        self.assertAlmostEqual(
+            ft.trot_weight_shift_sign(0.5, blend=w), 0.0, places=5)
+        self.assertAlmostEqual(
+            ft.trot_weight_shift_sign(1.0 - w, blend=w), 0.0, places=5)
+        self.assertAlmostEqual(
+            ft.trot_weight_shift_sign(0.0, blend=w), -1.0, places=5)
+        self.assertAlmostEqual(
+            ft.trot_weight_shift_sign(1.0 - 1e-9, blend=w), -1.0, places=5)
+        # Peak |d(sign)/dphase| at wrap ≤ mid (not 2× steeper)
+        mid_rates = []
+        wrap_rates = []
+        for i in range(200):
+            p0, p1 = i / 200.0, (i + 1) / 200.0
+            d = abs(
+                ft.trot_weight_shift_sign(p1, blend=w)
+                - ft.trot_weight_shift_sign(p0, blend=w)
+            ) * 200.0
+            if 0.4 <= p0 < 0.6:
+                mid_rates.append(d)
+            if 0.8 <= p0 < 1.0:
+                wrap_rates.append(d)
+        self.assertLessEqual(max(wrap_rates), max(mid_rates) * 1.05)
+
+    def test_soft_td_compress_peak_rate_bounded(self):
+        """TD Z peak rate under short-stance CLI must stay trackable."""
+        compress = 0.0035
+        period, stance = 1.13, 0.33
+        n = 400
+        zs = []
+        for i in range(n + 1):
+            st = i / n
+            z = ft.natural_soft_trot_stance_lift(
+                st, anti_roll=0.0, anti_roll_soft_scale=0.0, diag_scale=1.0,
+                touchdown_compress=compress, toeoff_lift=0.0)
+            zs.append(z)
+        dt = (stance * period) / n
+        rates = [abs(zs[i + 1] - zs[i]) / dt for i in range(n)]
+        # Old 6mm/0.24 window peaked ~0.28m/s; new target << 0.12m/s
+        self.assertLess(max(rates), 0.12)
+        self.assertAlmostEqual(zs[0], 0.0, places=9)
+        self.assertAlmostEqual(zs[n], 0.0, places=9)
+
     def test_lateral_offset_pace_is_full_period_cosine(self):
         period, sr, sway = 1.0, 0.6, 0.01
         # phase == stance_ratio/2 -> cos(0) == 1 -> full amplitude.

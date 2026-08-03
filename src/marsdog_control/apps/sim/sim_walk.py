@@ -256,7 +256,7 @@ def main():
     startup = _prepare_walk_startup(
         args, runtime_state=runtime_state, joint_gains=SIM_JOINT_GAINS)
     print(
-        "[Sim] using SIM_JOINT_GAINS (SI impedance; real Incos 35/2.5 not applied)"
+        "[Sim] using SIM_JOINT_GAINS (SI impedance; real Incos load gains not applied)"
     )
     print(
         f"[Sim] --vx {drive_vx:.3f} → cruise_vx={abs(float(drive_vx)):.3f} m/s "

@@ -6,7 +6,7 @@ Design (2026-08):
     ``leg_kp_scale`` across brands.
   - ``SIM_JOINT_GAINS``: MuJoCo SI impedance (τ=kp·Δq+kd·Δqd). Same numeric
     brand-native kp is NOT the same physical stiffness in sim — keep a
-    separate table so real Incos sweeps (e.g. 35/2.5) do not soften sim roll.
+    separate table so real Incos sweeps (e.g. 55/3.0) do not soften sim roll.
   - Tune real Incos with ``tests/Motor_test/bench_motor_track.py sine``.
   - Tune sim legs for gait stability (esp. thigh_roll kd against trot rock).
 """
@@ -28,47 +28,48 @@ BRAND_GAIN_SCALE: Dict[str, Dict[str, float]] = {
 BRAND_DEFAULT_GAINS: Dict[str, Dict[str, float]] = {
     "lz": {"kp": 45.0, "kd": 4.0},
     "evo": {"kp": 30.0, "kd": 4.0},
-    "incos": {"kp": 35.0, "kd": 2.5},
+    "incos": {"kp": 55.0, "kd": 3.2},
     "dm": {"kp": 30.0, "kd": 0.5},
 }
 
 # ── Real robot (brand-native MIT units) ──────────────────────────────
 # 2026-08: remove global leg_kp_scale=0.65. Prior effective ≈ table×0.65 for
 # LZ/EVO legs is baked in below so SoftTrot feel does not jump stiff overnight.
-# Incos calves: symmetric sweep start (was FL70/FR90 asymmetry); kd raised to
-# cut ground squeal. Re-confirm with Motor_test sine --ids 3,7.
+#
+# 2026-08-03 walk_log_171601: 55/3.0 calf + 50/3.0 abd cut composite |err|
+# 16%; still calf~1.6° / fr_abd rel~0.49 — nudge again (KD≤5 protocol).
 JOINT_GAINS = {
-    "fl_hip_pitch":  {"kp": 100.0, "kd": 5.0, "trq_ff": 0.0},
-    "fr_hip_pitch":  {"kp": 100.0, "kd": 5.0, "trq_ff": 0.0},
-    # Incos front (IDs 2/3/6/7): 2026-08-01 hang sine ±3° T=2s grid.
-    # ENCOS V1.19 力位混控空载参考 KP≈15 KD≈0.5；协议 KP≤500 KD≤5。
-    # 选 35/2.5：RMS 已接近 45 档、阻尼更足，L/R 同值（勿再 70 vs 90）。
-    # trq_ff: 静态重力偏置(Nm)。外展轴重力臂≈0 → 0；小腿站姿需抗重力 → 非零。
-    # (开启 gravity_comp/WBC 时 executor 会用动力学 τ 覆盖，此值作无补偿回退。)
-    "fl_thigh_roll": {"kp": 35.0,  "kd": 2.5, "trq_ff": 0.0},
-    "fr_thigh_roll": {"kp": 35.0,  "kd": 2.5, "trq_ff": 0.0},
-    "fl_calf":       {"kp": 35.0,  "kd": 2.5, "trq_ff": 0.35},
-    "fr_calf":       {"kp": 35.0,  "kd": 2.5, "trq_ff": 0.35},
-    # 达妙 tarsus：扫频对齐后 FL/FR 同增益；外置 1:2 在 mapping 里 /N²
+    # Lz 前大腿: |err|~1.0° → 略加刚度
+    "fl_hip_pitch":  {"kp": 115.0, "kd": 5.5, "trq_ff": 0.0},
+    "fr_hip_pitch":  {"kp": 115.0, "kd": 5.5, "trq_ff": 0.0},
+    # Incos 前外展 (IDs 2/6): com_shift±12mm 全靠此轴
+    "fl_thigh_roll": {"kp": 55.0,  "kd": 3.2, "trq_ff": 0.0},
+    "fr_thigh_roll": {"kp": 55.0,  "kd": 3.2, "trq_ff": 0.0},
+    # Incos 前小腿 (IDs 3/7): 仍为最大 |err|
+    "fl_calf":       {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.35},
+    "fr_calf":       {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.35},
+    # 达妙 tarsus：扫频对齐后 FL/FR 同增益；外置 1:2 在 mapping 里 /N²（跟踪尚可，不动）
     "fl_tarsus":     {"kp": 220.0, "kd": 10.0, "trq_ff": 0.0},
     "fr_tarsus":     {"kp": 220.0, "kd": 10.0, "trq_ff": 0.0},
+    # Evo 后髋: |err|~0.19° 已优，不动
     "rl_hip":        {"kp": 78.0,  "kd": 10.0, "trq_ff": 0.0},  # EVO: KD_MAX=50
     "rr_hip":        {"kp": 78.0,  "kd": 10.0, "trq_ff": 0.0},
-    "rl_thigh":      {"kp": 91.0,  "kd": 5.0, "trq_ff": 0.30},
-    "rr_thigh":      {"kp": 91.0,  "kd": 5.0, "trq_ff": 0.30},
-    "rl_calf":       {"kp": 78.0,  "kd": 5.0, "trq_ff": 0.45},
-    "rr_calf":       {"kp": 78.0,  "kd": 5.0, "trq_ff": 0.45},
+    # Lz 后大腿/小腿
+    "rl_thigh":      {"kp": 105.0, "kd": 5.5, "trq_ff": 0.30},
+    "rr_thigh":      {"kp": 105.0, "kd": 5.5, "trq_ff": 0.30},
+    "rl_calf":       {"kp": 95.0,  "kd": 5.5, "trq_ff": 0.45},
+    "rr_calf":       {"kp": 95.0,  "kd": 5.5, "trq_ff": 0.45},
     "head_pitch":    {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
     "head_yaw":      {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
     "head_roll":     {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
     "neck_pitch":    {"kp": 30.0,  "kd": 5.0, "trq_ff": 0.0},
     "waist_yaw":     {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
     "waist_pitch":   {"kp": 60.0,  "kd": 5.0, "trq_ff": 0.0},
-    "waist_roll":    {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
+    "waist_roll":    {"kp": 65.0,  "kd": 5.5, "trq_ff": 0.0},
 }
 
 # ── Simulation (MuJoCo SI impedance Nm/rad, Nm·s/rad) ────────────────
-# Do NOT copy JOINT_GAINS Incos 35/2.5 here — that softens sim roll and
+# Do NOT copy JOINT_GAINS Incos load gains here — that softens sim roll and
 # tips SoftTrot. Baseline = last known-good sim impedance (pre brand-native
 # Incos sweep). Head/waist match real; legs keep harder SI stiffness.
 SIM_JOINT_GAINS = {

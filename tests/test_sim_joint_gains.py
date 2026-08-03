@@ -23,9 +23,11 @@ class SimJointGainsTest(unittest.TestCase):
         self.assertEqual(set(JOINT_GAINS), set(SIM_JOINT_GAINS))
 
     def test_incos_soft_real_not_copied_to_sim_roll(self):
-        # Real Incos sweep 35/2.5 must not soften MuJoCo thigh_roll.
-        self.assertAlmostEqual(JOINT_GAINS["fl_thigh_roll"]["kp"], 35.0)
-        self.assertAlmostEqual(JOINT_GAINS["fl_thigh_roll"]["kd"], 2.5)
+        # Real Incos load gains must not soften MuJoCo thigh_roll.
+        self.assertAlmostEqual(JOINT_GAINS["fl_thigh_roll"]["kp"], 55.0)
+        self.assertAlmostEqual(JOINT_GAINS["fl_thigh_roll"]["kd"], 3.2)
+        self.assertAlmostEqual(JOINT_GAINS["fl_calf"]["kp"], 65.0)
+        self.assertAlmostEqual(JOINT_GAINS["fl_calf"]["kd"], 3.2)
         self.assertGreater(SIM_JOINT_GAINS["fl_thigh_roll"]["kp"], 60.0)
         self.assertGreaterEqual(SIM_JOINT_GAINS["fl_thigh_roll"]["kd"], 4.0)
 

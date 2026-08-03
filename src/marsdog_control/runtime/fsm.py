@@ -128,6 +128,7 @@ class RuntimeStateMachine:
                 turn_amp_diff=float(
                     getattr(self.nat_fwd, "max_turn_amp_diff", 0.020)
                 ),
+                lock_geometry=True,
             )
         )
         self._walk_schedule = WalkSchedule(
@@ -145,6 +146,7 @@ class RuntimeStateMachine:
                 ),
                 vx_engage=float(drive.gp_trot_threshold),
                 vx_deadzone=float(drive.gp_deadzone),
+                lock_geometry=True,
             )
         )
         self._jump_schedule = JumpSchedule(vx_engage_mps=0.02)
@@ -167,6 +169,7 @@ class RuntimeStateMachine:
                 turn_amp_diff=float(
                     getattr(self.trot_fwd, "max_turn_amp_diff", 0.020)
                 ),
+                lock_geometry=True,
             )
         )
 

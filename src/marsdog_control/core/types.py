@@ -75,6 +75,7 @@ class UserCommand:
     request_lie_down: bool = False               # 趴下请求(手柄 LT / 键盘 p)
     request_sit: bool = False                    # 坐下请求(键盘 z)
     request_bark: bool = False                   # 狗叫/狗头动作请求(手柄 RT 边沿)
+    request_abd_flare_toggle: bool = False       # 站立外展方向验证(键盘 a 切换)
     estop: bool = False                          # 紧急停止
     quit: bool = False                           # 正常退出
 

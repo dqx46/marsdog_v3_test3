@@ -196,6 +196,11 @@ class StandController(GaitController):
         self.body_height = h
         self._update_cache()
 
+    def set_hip_abduction(self, hip_abduction: float):
+        """更新站立外展角并刷新缓存(URDF: 正=四腿同时向外)。"""
+        self.hip_abduction = float(hip_abduction)
+        self._update_cache()
+
     def get_targets(self, t: float) -> dict:
         targets = dict(self._cached)
         j_wp = JOINT_BY_NAME["waist_pitch"]
@@ -1058,14 +1063,14 @@ class NaturalSoftTrot(NaturalTrot):
     _STANCE_TAPER = 0.10
 
     def __init__(self, *args,
-                 touchdown_compress: float = 0.004,
+                 touchdown_compress: float = 0.0035,
                  anti_roll_soft_scale: float = 0.35,
                  toeoff_lift: float = 0.003,
                  retract_peak: float = 0.38,
                  lift_peak: float = 0.45,
                  rear_clearance_m: float = 0.0,
                  com_shift_m: float = 0.0,
-                 com_shift_blend: float = 0.12,
+                 com_shift_blend: float = 0.15,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.touchdown_compress = touchdown_compress

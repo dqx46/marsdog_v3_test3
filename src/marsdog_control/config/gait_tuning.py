@@ -54,7 +54,7 @@ class GaitCliDefaults:
     lateral_sway: float = 0.0
     # SoftTrot 横向质心规划 (m); >0 时用事件型移重，覆盖 half-sine lateral_sway
     com_shift_m: float = 0.012
-    com_shift_blend: float = 0.12
+    com_shift_blend: float = 0.15
     anti_roll: float = 0.0
     trot_roll_ff_neg_deg: float = 0.0
     trot_roll_ff_pos_deg: float = 0.0
@@ -85,7 +85,7 @@ class GaitCliDefaults:
     retract_front: float = 0.010
     retract_rear: float = 0.008
     tarsus_swing_deg: float = 0.0
-    touchdown_compress: float = 0.006
+    touchdown_compress: float = 0.0035
     anti_roll_soft_scale: float = 0.0
     toeoff_lift: float = 0.0008
     retract_peak: float = 0.42

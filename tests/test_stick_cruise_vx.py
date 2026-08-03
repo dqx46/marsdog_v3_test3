@@ -6,7 +6,6 @@ from marsdog_control.config.stack_build import FsmDriveConfig
 from marsdog_control.core.types import Direction, RobotMode, RobotState, UserCommand
 from marsdog_control.input.teleop_policy import DEFAULT_CRUISE_VX_MPS
 from marsdog_control.motion.gait_recipes import ControllerSet
-from marsdog_control.motion.gait_schedule import SoftTrotSchedule, VelocityCommand
 from marsdog_control.runtime.fsm import RuntimeStateMachine
 
 
@@ -71,19 +70,38 @@ def test_natural_stick_half_and_full_same_schedule():
     fsm.update(state, cmd_half, last_targets={})
     amp_half = float(fsm.nat_fwd.amp_front)
     period_half = float(fsm.nat_fwd.period)
+    stance_half = float(fsm.nat_fwd.stance_ratio)
     th_half = float(fsm.throttle)
 
     cmd_full = UserCommand(vx=1.0, has_stick=True)
     fsm.update(state, cmd_full, last_targets={})
     amp_full = float(fsm.nat_fwd.amp_front)
     period_full = float(fsm.nat_fwd.period)
+    stance_full = float(fsm.nat_fwd.stance_ratio)
     th_full = float(fsm.throttle)
 
     assert abs(th_half - cruise) < 1e-9
     assert abs(th_full - cruise) < 1e-9
     assert abs(amp_half - amp_full) < 1e-9
     assert abs(period_half - period_full) < 1e-9
+    assert abs(stance_half - stance_full) < 1e-9
 
-    expect = SoftTrotSchedule(fsm._nat_schedule.env).map(VelocityCommand(vx=cruise))
-    assert abs(amp_full - expect.amp_front) < 1e-9
-    assert abs(period_full - expect.period) < 1e-9
+    # Locked geometry: recipe amp/period/stance, not vx-inverted schedule.
+    assert abs(amp_full - fsm.nat_amp_front) < 1e-9
+    assert abs(period_full - 0.58) < 1e-9
+    assert abs(stance_full - 0.56) < 1e-9
+    assert fsm._nat_schedule.env.lock_geometry is True
+
+
+def test_locked_geometry_ignores_cruise_vx_authority():
+    """Different cruise_vx must not retune amp/period when geometry is locked."""
+    fsm_a = _fsm(0.05)
+    fsm_b = _fsm(0.134)
+    state = RobotState()
+    for fsm in (fsm_a, fsm_b):
+        fsm.request_transition(RobotMode.NATURAL, Direction.FWD, targets_now={})
+        fsm.update(state, UserCommand(vx=1.0, has_stick=True), last_targets={})
+    assert abs(fsm_a.nat_fwd.amp_front - fsm_b.nat_fwd.amp_front) < 1e-9
+    assert abs(fsm_a.nat_fwd.period - fsm_b.nat_fwd.period) < 1e-9
+    assert abs(fsm_a.nat_fwd.stance_ratio - fsm_b.nat_fwd.stance_ratio) < 1e-9
+    assert abs(fsm_a.nat_fwd.period - 0.58) < 1e-9

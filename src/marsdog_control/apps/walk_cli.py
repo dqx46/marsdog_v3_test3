@@ -176,7 +176,7 @@ def parse_args():
                         "正=FL+RR→右; --sim-parity 会关掉")
     p.add_argument("--com-shift-blend", type=float, default=GAIT.com_shift_blend,
                    dest="com_shift_blend", metavar="PHASE",
-                   help="[位控·质心] 对角换腿 smoothstep 半宽 (相位 0~0.2), 默认 0.12")
+                   help="[位控·质心] 对角换腿 smoothstep 半宽 (相位 0~0.15), 默认随 GAIT")
     p.add_argument("--rear-clearance", type=float, default=GAIT.rear_clearance_m,
                    dest="rear_clearance_m", metavar="M",
                    help="[补丁] 后腿摆动额外净空 (m); 默认 0=关, 优先调 step_h")

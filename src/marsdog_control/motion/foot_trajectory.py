@@ -117,9 +117,12 @@ def trot_weight_shift_sign(phase: float, blend: float = 0.12) -> float:
       phase∈[0.5, 1): FR+RL 主支撑 → +1（身体左移 / +Y）
 
     换腿窗口 smoothstep；支撑中期满幅。
+    周期回绕与 0.5 换腿同用 2·blend 宽度，并在 phase=0 前完成，
+    避免旧实现「回绕只用 blend、比半周切换陡 2×」在触地瞬间甩外展。
     """
     p = phase % 1.0
-    w = max(1e-3, min(0.20, float(blend)))
+    # w≤1/6: mid blend ends at 0.5+w, wrap starts at 1−2w; keep a gap.
+    w = max(1e-3, min(0.15, float(blend)))
 
     def _ss(x: float) -> float:
         x = 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
@@ -131,9 +134,10 @@ def trot_weight_shift_sign(phase: float, blend: float = 0.12) -> float:
     if p < 0.5 + w:
         a = _ss((p - (0.5 - w)) / (2.0 * w))
         return -1.0 * (1.0 - a) + 1.0 * a
-    if p < 1.0 - w:
+    # Wrap: same 2w duration as mid switch; finish at p=1 → −1 for TD.
+    if p < 1.0 - 2.0 * w:
         return 1.0
-    a = _ss((p - (1.0 - w)) / w)
+    a = _ss((p - (1.0 - 2.0 * w)) / (2.0 * w))
     return 1.0 * (1.0 - a) + (-1.0) * a
 
 
@@ -176,9 +180,10 @@ def walk_weight_shift_sign(phase: float, blend: float = 0.10) -> float:
 
     Left-swing half starts at phase≈0 (RL lift): already holding right (−1).
     Transition to left (+1) around 0.5 before RR/FR lifts; return to right near 1.0.
+    Wrap blend matches mid-cycle 2·blend width (same as trot_weight_shift_sign).
     """
     p = phase % 1.0
-    w = max(1e-3, min(0.20, float(blend)))
+    w = max(1e-3, min(0.15, float(blend)))
 
     def _ss(x: float) -> float:
         x = 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
@@ -189,9 +194,9 @@ def walk_weight_shift_sign(phase: float, blend: float = 0.10) -> float:
     if p < 0.5 + w:
         a = _ss((p - (0.5 - w)) / (2.0 * w))
         return -1.0 * (1.0 - a) + 1.0 * a
-    if p < 1.0 - w:
+    if p < 1.0 - 2.0 * w:
         return 1.0
-    a = _ss((p - (1.0 - w)) / w)
+    a = _ss((p - (1.0 - 2.0 * w)) / (2.0 * w))
     return 1.0 * (1.0 - a) + (-1.0) * a
 
 
@@ -236,13 +241,14 @@ def natural_walk_swing_z(swing_t: float, step_h: float, lift_peak: float) -> flo
 def natural_walk_stance_lift(stance_t: float, touchdown_compress: float,
                              toeoff_lift: float) -> float:
     """Walk 支撑相 Z：轻触地缓冲 + 离地前微抬，无对角 anti-roll。"""
+    # Match SoftTrot: longer TD window so short-stance runs don't spike calf dq.
     td = (
-        minimum_jerk_bump(min(stance_t / 0.20, 1.0), 0.40)
-        if stance_t < 0.20 else 0.0
+        minimum_jerk_bump(min(stance_t / 0.40, 1.0), 0.50)
+        if stance_t < 0.40 else 0.0
     )
     toe = (
-        minimum_jerk_bump((stance_t - 0.85) / 0.15, 0.55)
-        if stance_t > 0.85 else 0.0
+        minimum_jerk_bump((stance_t - 0.82) / 0.18, 0.55)
+        if stance_t > 0.82 else 0.0
     )
     return touchdown_compress * td + toeoff_lift * toe
 
@@ -455,15 +461,33 @@ def natural_soft_trot_x(phase: float, amp: float, cx: float, stance_ratio: float
         return x, True, swing_t
 
 
+# SoftTrot TD compress: old window 0.24·stance with peak@0.45 → ~40ms to peak
+# at T=1.13/stance=0.33, forcing rear-calf ~5rad/s. Stretch so peak Z rate
+# stays trackable even with short-stance CLI overrides.
+_SOFT_TD_WINDOW = 0.42
+_SOFT_TD_PEAK = 0.50
+_SOFT_TOE_START = 0.78
+_SOFT_TOE_WINDOW = 0.22
+_SOFT_TOE_PEAK = 0.55
+
+
 def natural_soft_trot_stance_lift(stance_t: float, anti_roll: float,
                                    anti_roll_soft_scale: float, diag_scale: float,
                                    touchdown_compress: float,
                                    toeoff_lift: float) -> float:
-    """NaturalSoftTrot 支撑相 Z: 触地缓冲 + 离地缓冲 + 软化 anti-roll。"""
-    td = minimum_jerk_bump(min(stance_t / 0.24, 1.0), 0.45) if stance_t < 0.24 else 0.0
+    """NaturalSoftTrot 支撑相 Z: 触地缓冲 + 离地缓冲 + 软化 anti-roll。
+
+    触地压缩铺在支撑相前 ~42%（峰在半窗），避免短 stance 时 6mm 压缩挤进
+    ~40ms 造成后小腿目标角速度爆炸（真机 TD 抖的主因）。
+    """
+    td = (
+        minimum_jerk_bump(min(stance_t / _SOFT_TD_WINDOW, 1.0), _SOFT_TD_PEAK)
+        if stance_t < _SOFT_TD_WINDOW else 0.0
+    )
     toe = (
-        minimum_jerk_bump((stance_t - 0.82) / 0.18, 0.55)
-        if stance_t > 0.82 else 0.0
+        minimum_jerk_bump(
+            (stance_t - _SOFT_TOE_START) / _SOFT_TOE_WINDOW, _SOFT_TOE_PEAK)
+        if stance_t > _SOFT_TOE_START else 0.0
     )
     support = math.sin(math.pi * stance_t)
     return (

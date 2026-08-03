@@ -215,7 +215,7 @@ def prepare_walk_startup(
                               natural_params.get("com_shift_m", 0.0)))
         if abs(com_m) > 1e-6:
             blend = float(getattr(args, "com_shift_blend",
-                                  natural_params.get("com_shift_blend", 0.12)))
+                                  natural_params.get("com_shift_blend", 0.15)))
             sign_note = "正=FL+RR→右(反相优)" if com_m > 0 else "负=旧同号方向"
             print(
                 f"[COM] SoftTrot 横向移重 com_shift={com_m*1000:+.1f}mm "

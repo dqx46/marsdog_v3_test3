@@ -593,7 +593,8 @@ NATURAL_SOFT_TROT = {
     "fwd_front_lift": 0.020,
     "fwd_front_amp_scale": 1.0,
     # ── 核心足端形状 ──
-    "touchdown_compress": 0.006,
+    # 3.5mm + 加宽 TD 窗：旧 6mm/0.24stance 在短 stance 下后小腿目标 dq 爆
+    "touchdown_compress": 0.0035,
     "anti_roll_soft_scale": 0.0,
     "toeoff_lift": 0.0008,
     "retract_peak": 0.42,
@@ -606,7 +607,8 @@ NATURAL_SOFT_TROT = {
     "swing_clearance_per_rad": 0.35,
     # ── 横向唯一策略 ──
     "com_shift_m": 0.012,
-    "com_shift_blend": 0.12,
+    # 0.15：回绕与半周切换同为 2·blend，触地前完成移重（上限见 foot_trajectory）
+    "com_shift_blend": 0.15,
     "rear_clearance_m": 0.0,
     "swing_level": 0.0,
     "front_thrust_gain": 1.0,

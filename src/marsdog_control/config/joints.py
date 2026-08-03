@@ -62,7 +62,10 @@ JOINT_MAP = [
     JointDesc(1,  "fl_hip_pitch",   46, -1, "lz", "lz_can_a",  -_PI, 0.97,
               model="RS02", gear_ratio=1.0),
     # 2026-07-29: 前腿大腿外展改为因克斯 EC-A2806, 与小腿同总线
-    JointDesc(2,  "fl_thigh_roll",  47, -1, "incos", "incos_can",  -_PI, 0.18,
+    # 2026-08-03 真机标定(键盘 a 外展验证): 前腿外展相对 URDF+外开反了。
+    # 只改 JointDesc.sign(+限位镜像)：实机 send 走 urdf×sign；MuJoCo 直接吃
+    # URDF、不乘 sign，故仿真/运动学/URDF「正=外开」约定不变。
+    JointDesc(2,  "fl_thigh_roll",  47, +1, "incos", "incos_can",  -0.40, _PI,
               model="EC-A2806-P2-36", gear_ratio=1.0),
     # 2026-07-17 实测标定: 侧翻逐个驱动+肉眼确认, fl 正确站立小腿角为 +电机角
     # (原 sign=+1 会发 -80° 折反)。改 sign=-1; 限位随之做镜像对调保持 URDF 可达范围。
@@ -76,8 +79,8 @@ JOINT_MAP = [
     # ── 前右腿 (Front Right) ──────────────────────────────────────
     JointDesc(5,  "fr_hip_pitch",   49, +1, "lz", "lz_can_a",  -0.97, _PI,
               model="RS02", gear_ratio=1.0),
-    # lie 捕获可达 ≈-18°; 原 -0.18rad 过窄会在 hold 钳位跳变
-    JointDesc(6,  "fr_thigh_roll",  50, +1, "incos", "incos_can",  -0.40, _PI,
+    # 同 fl: 2026-08-03 真机前腿外展反向 → sign +1→-1, 限位镜像；仿真不受影响
+    JointDesc(6,  "fr_thigh_roll",  50, -1, "incos", "incos_can",  -_PI, 0.40,
               model="EC-A2806-P2-36", gear_ratio=1.0),
     # 2026-07-17 实测标定: fr 正确站立小腿角为 -电机角 (原 sign=-1 会发 +80° 折反)。
     JointDesc(7,  "fr_calf",        51, +1, "incos", "incos_can",  -1.82, 1.93,

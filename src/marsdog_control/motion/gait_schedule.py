@@ -87,6 +87,9 @@ class GaitEnvelope:
     cruise_turn_amp_diff_m: float = 0.020
     vx_deadzone: float = 0.12
     vx_engage: float = 0.30  # matches gp_trot_threshold
+    # When True: any |vx| above stop uses recipe amp/period/stance/step at full
+    # (teleop engage-cruise). Stick depth and cruise_vx no longer reshape gait.
+    lock_geometry: bool = False
     # Spot: Raibert plant-hold turn (swing → ω×r, stance HOLD).
     spot_period: float = 0.85
     spot_stance: float = 0.55
@@ -149,6 +152,7 @@ class GaitEnvelope:
         vx_deadzone: float = 0.12,
         turn_y_amp: Optional[float] = None,
         turn_amp_diff: Optional[float] = None,
+        lock_geometry: bool = False,
     ) -> "GaitEnvelope":
         sh_f = float(step_h_front) if step_h_front is not None else 0.024
         sh_r = float(step_h_rear) if step_h_rear is not None else max(sh_f, 0.034)
@@ -165,6 +169,25 @@ class GaitEnvelope:
         )
         y_amp = float(turn_y_amp) if turn_y_amp is not None else 0.025
         amp_diff = float(turn_amp_diff) if turn_amp_diff is not None else 0.020
+        period = float(period)
+        lock = bool(lock_geometry)
+        if lock:
+            # Flat envelope: schedule cannot retune period/stance vs vx.
+            pmin = pmax = period
+            stance_kw = {
+                "stance_nom": float(stance),
+                "stance_min": float(stance),
+                "stance_max": float(stance),
+            }
+            tms = 1.0
+        else:
+            pmin = max(0.40, period * 0.94)
+            pmax = period * 1.12
+            stance_kw = cls._stance_band(
+                float(stance), floor=0.20, ceil=0.95,
+                classic_lo=0.50, classic_hi=0.62,
+            )
+            tms = float(throttle_min_scale)
         return cls(
             amp_front_max=float(amp_front),
             amp_rear_max=float(amp_rear),
@@ -172,23 +195,23 @@ class GaitEnvelope:
             step_h_rear_max=sh_r,
             step_h_front_floor=fl_f,
             step_h_rear_floor=fl_r,
-            period_nom=float(period),
+            period_nom=period,
             # Dog-like trot cadence; keep min/max close so full-stick doesn't
             # suddenly halve duty and blow roll (seen: st=0.50 @ vx=1 → tip).
             # Bounds scale with CLI/preset period (no hard 0.85s cap).
-            period_min=max(0.40, float(period) * 0.94),
-            period_max=float(period) * 1.12,
+            period_min=pmin,
+            period_max=pmax,
             # Honor CLI/preset duty, including flight-heavy (<0.5). Old floor
             # max(0.50, …) made --stance 0.36 invert min/max and ignore CLI.
-            **cls._stance_band(float(stance), floor=0.20, ceil=0.95,
-                                classic_lo=0.50, classic_hi=0.62),
-            throttle_min_scale=float(throttle_min_scale),
+            **stance_kw,
+            throttle_min_scale=tms,
             cruise_turn_scale=float(cruise_turn_scale),
             cruise_turn_yamp=float(cruise_turn_yamp),
             cruise_turn_y_amp_m=y_amp,
             cruise_turn_amp_diff_m=amp_diff,
             vx_engage=float(vx_engage),
             vx_deadzone=float(vx_deadzone),
+            lock_geometry=lock,
             # Spot: Raibert plant-hold (swing → ω×r, stance HOLD).
             spot_period=0.85,
             spot_stance=0.55,
@@ -219,6 +242,7 @@ class GaitEnvelope:
         throttle_min_scale: float = 0.55,
         vx_engage: float = 0.3,
         vx_deadzone: float = 0.12,
+        lock_geometry: bool = False,
     ) -> "GaitEnvelope":
         """Four-beat Walk envelope — high duty, slow cadence; no spot fields used."""
         sh_f = float(step_h_front) if step_h_front is not None else 0.034
@@ -233,6 +257,9 @@ class GaitEnvelope:
             if step_h_rear_floor is not None
             else min(0.028, max(0.018, 0.60 * sh_r))
         )
+        period = float(period)
+        stance = float(stance)
+        lock = bool(lock_geometry)
         return cls(
             amp_front_max=float(amp_front),
             amp_rear_max=float(amp_rear),
@@ -240,19 +267,20 @@ class GaitEnvelope:
             step_h_rear_max=sh_r,
             step_h_front_floor=fl_f,
             step_h_rear_floor=fl_r,
-            period_nom=float(period),
-            period_min=max(0.88, float(period) * 0.94),
-            period_max=min(1.25, float(period) * 1.10),
-            stance_nom=float(stance),
-            stance_min=max(0.68, float(stance) - 0.03),
-            stance_max=min(0.78, float(stance) + 0.03),
-            throttle_min_scale=float(throttle_min_scale),
+            period_nom=period,
+            period_min=period if lock else max(0.88, period * 0.94),
+            period_max=period if lock else min(1.25, period * 1.10),
+            stance_nom=stance,
+            stance_min=stance if lock else max(0.68, stance - 0.03),
+            stance_max=stance if lock else min(0.78, stance + 0.03),
+            throttle_min_scale=1.0 if lock else float(throttle_min_scale),
             cruise_turn_scale=0.0,  # v1: forward-only
             cruise_turn_yamp=0.0,
             cruise_turn_y_amp_m=0.0,
             cruise_turn_amp_diff_m=0.0,
             vx_engage=float(vx_engage),
             vx_deadzone=float(vx_deadzone),
+            lock_geometry=lock,
         )
 
 
@@ -340,6 +368,10 @@ class SoftTrotSchedule:
         if abs(vx) < _VX_STOP_MPS:
             u = 0.0
             speed_frac = 0.0
+        elif e.lock_geometry:
+            # Teleop engage-cruise: recipe geometry only (ignore vx authority).
+            u = 1.0
+            speed_frac = 1.0
         else:
             u = self._authority_for_vx(vx)
             speed_frac = self._speed_frac(u)
@@ -348,26 +380,34 @@ class SoftTrotSchedule:
         amp_f = sign * e.amp_front_max * speed_frac
         amp_r = sign * e.amp_rear_max * speed_frac
         if speed_frac > 1e-9:
-            # Lift ∝ speed_frac; anti-limp floor only above throttle_min_scale.
-            scuff_f = min(0.010, 0.45 * e.step_h_front_floor)
-            scuff_r = min(0.012, 0.45 * e.step_h_rear_floor)
-            tms = max(1e-6, e.throttle_min_scale)
-            floor_blend = max(
-                0.0, min(1.0, (speed_frac - tms) / max(1e-6, 1.0 - tms))
-            )
-            floor_f = scuff_f + (e.step_h_front_floor - scuff_f) * floor_blend
-            floor_r = scuff_r + (e.step_h_rear_floor - scuff_r) * floor_blend
-            step_f = max(floor_f, e.step_h_front_max * speed_frac)
-            step_r = max(floor_r, e.step_h_rear_max * speed_frac)
+            if e.lock_geometry:
+                step_f = float(e.step_h_front_max)
+                step_r = float(e.step_h_rear_max)
+            else:
+                # Lift ∝ speed_frac; anti-limp floor only above throttle_min_scale.
+                scuff_f = min(0.010, 0.45 * e.step_h_front_floor)
+                scuff_r = min(0.012, 0.45 * e.step_h_rear_floor)
+                tms = max(1e-6, e.throttle_min_scale)
+                floor_blend = max(
+                    0.0, min(1.0, (speed_frac - tms) / max(1e-6, 1.0 - tms))
+                )
+                floor_f = scuff_f + (e.step_h_front_floor - scuff_f) * floor_blend
+                floor_r = scuff_r + (e.step_h_rear_floor - scuff_r) * floor_blend
+                step_f = max(floor_f, e.step_h_front_max * speed_frac)
+                step_r = max(floor_r, e.step_h_rear_max * speed_frac)
         else:
             step_f = 0.0
             step_r = 0.0
 
-        period = e.period_max + (e.period_min - e.period_max) * u
-        stance = e.stance_max + (e.stance_min - e.stance_max) * u
-        if speed_frac <= 1e-9:
-            period = e.period_nom
-            stance = e.stance_nom
+        if e.lock_geometry and speed_frac > 1e-9:
+            period = float(e.period_nom)
+            stance = float(e.stance_nom)
+        else:
+            period = e.period_max + (e.period_min - e.period_max) * u
+            stance = e.stance_max + (e.stance_min - e.stance_max) * u
+            if speed_frac <= 1e-9:
+                period = e.period_nom
+                stance = e.stance_nom
 
         from marsdog_control.control.velocity_model import VX_SCRUB_OFFSET_MPS
 

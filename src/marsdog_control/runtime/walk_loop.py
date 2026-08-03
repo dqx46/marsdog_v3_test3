@@ -61,6 +61,57 @@ class LoopHardware:
     board: Optional[MotorBoard] = None
 
 
+def _set_stand_hip_abduction(stand, hip_abduction: float) -> None:
+    if hasattr(stand, "set_hip_abduction"):
+        stand.set_hip_abduction(hip_abduction)
+    else:
+        stand.hip_abduction = float(hip_abduction)
+        if hasattr(stand, "_update_cache"):
+            stand._update_cache()
+
+
+def clear_abd_flare(ctx: "WalkLoopContext", *, reason: str = "") -> None:
+    """收回站立外展验证角，恢复 flare 前的 hip_abduction。"""
+    if not ctx.abd_flare_active and ctx.abd_flare_base is None:
+        return
+    if ctx.abd_flare_base is not None:
+        _set_stand_hip_abduction(ctx.stand, ctx.abd_flare_base)
+    ctx.abd_flare_active = False
+    ctx.abd_flare_base = None
+    if reason:
+        print(f"\n[abd-flare] OFF ({reason})")
+
+
+def toggle_abd_flare(ctx: "WalkLoopContext") -> None:
+    """键盘 a：站立时切换四腿外展打开/收回，用于肉眼核对关节方向。"""
+    import math
+
+    if ctx.lie_down_session.hold:
+        print("\n[abd-flare] 坐下/趴下保持中，忽略 (请先起立回 STAND)")
+        return
+    if ctx.fsm.active_gait is not None:
+        print("\n[abd-flare] 仅站立可用；请先 SPACE 回站立再按 a")
+        return
+
+    if ctx.abd_flare_active:
+        clear_abd_flare(ctx, reason="再按 a")
+        return
+
+    base = float(getattr(ctx.stand, "hip_abduction", 0.08))
+    target = max(float(ctx.abd_flare_rad), base + 0.06)
+    ctx.abd_flare_base = base
+    ctx.abd_flare_active = True
+    _set_stand_hip_abduction(ctx.stand, target)
+    print(
+        f"\n[abd-flare] ON: 站立外展 {base:.3f}→{target:.3f} rad "
+        f"({math.degrees(target):.1f}°)  URDF+ = 四腿同时向外\n"
+        "  关节: ID2 fl_thigh_roll / ID6 fr_thigh_roll / "
+        "ID9 rl_hip / ID12 rr_hip\n"
+        "  期望: 四条腿都向外打开；若某腿向内收 → 该关节 sign 或轴约定反了\n"
+        "  再按 a=收回；SPACE 走路会自动收回"
+    )
+
+
 def mode_str(fsm) -> str:
     """按实际正在消费的 controller 记录模式，避免状态枚举与执行路径不一致。"""
     gait = fsm.active_gait
@@ -118,6 +169,10 @@ class WalkLoopContext:
     tail: Optional[TailController] = None
     joint_map: Optional[Sequence[JointDesc]] = None
     control_hz: float = 200.0
+    # 站立外展方向验证(键盘 a): URDF+ 四腿同时外开 ID2/6/9/12
+    abd_flare_active: bool = False
+    abd_flare_base: Optional[float] = None
+    abd_flare_rad: float = 0.16  # ~9.2°；应明显外开且仍在软限位内
     clock: Optional[ClockLike] = None
     backend: Optional[RobotBackend] = None
 
@@ -187,7 +242,12 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         from marsdog_control.core.types import RobotMode
         ctx.fsm.request_transition(RobotMode.ESTOP, targets_now=ctx.targets)
         return False
+    if cmd.request_abd_flare_toggle:
+        toggle_abd_flare(ctx)
+
     if cmd.request_lie_down or cmd.request_sit:
+        if ctx.abd_flare_active:
+            clear_abd_flare(ctx, reason="切姿势前收回外展")
         pose = "sit" if cmd.request_sit else "lie_down"
         # 同周期两键都按：坐下优先（少见）
         if cmd.request_sit and cmd.request_lie_down:
@@ -228,6 +288,9 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         ctx.dm_tarsus_active = ctx.fsm.dm_active()
     rt.dm.active = ctx.dm_tarsus_active
     active_trot = ctx.fsm.active_gait
+    # 走路时强制收回外展验证，避免与 SoftTrot 髋外展叠加
+    if ctx.abd_flare_active and active_trot is not None:
+        clear_abd_flare(ctx, reason="进入步态")
     t_gait = ctx.fsm.t_gait
     height = ctx.fsm.height
     throttle = ctx.fsm.throttle
@@ -412,6 +475,7 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         leg_pitch_test=ctx.leg_pitch_test,
         direction_test_start=ctx.direction_test_start,
         direction_test_duration_s=ctx.direction_test_duration_s,
+        abd_flare_active=ctx.abd_flare_active,
         lz=ctx.lz,
         evo=ctx.evo,
         incos=ctx.incos,

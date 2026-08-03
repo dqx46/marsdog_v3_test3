@@ -265,8 +265,8 @@ def assemble_walk_control_stack(
     drive = FsmDriveConfig.from_args(
         args, gp_trot_threshold=gp_trot_threshold, gp_deadzone=gp_deadzone)
     print(
-        f"[teleop] 摇杆走/停→巡航 cruise_vx={drive.cruise_vx:.3f} m/s "
-        f"(SI; 推杆深浅不改步态; 对齐仿真 --vx {drive.cruise_vx:.3f})"
+        f"[teleop] 摇杆走/停→固定巡航几何 cruise_vx={drive.cruise_vx:.3f} m/s "
+        f"(SI; 深度不改步态; period/stance/amp=配方原值; 对齐仿真 --vx {drive.cruise_vx:.3f})"
     )
 
     fwd = compute_forward_gait_amps(gait_cfg)

@@ -177,6 +177,8 @@ def poll_user_command(gp, kb, fsm, inp: InputState, *,
         cmd.request_sit = True                  # 坐下(sit_pose.json)
     elif key in ('p', 'P'):
         cmd.request_lie_down = True             # 趴下(lie_down_pose.json)
+    elif key in ('a', 'A'):
+        cmd.request_abd_flare_toggle = True     # 站立四腿外展方向验证
     else:
         dev_key = key                           # 其余交给开发调参旁路
     return cmd, dev_key

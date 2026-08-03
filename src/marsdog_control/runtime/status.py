@@ -31,7 +31,8 @@ class RuntimeStatusDisplay:
                hip_abd_test: bool, leg_pitch_test: bool,
                direction_test_start: float, direction_test_duration_s: float,
                lz, evo, incos=None, board=None,
-               pose_hold_name: str | None = None) -> None:
+               pose_hold_name: str | None = None,
+               abd_flare_active: bool = False) -> None:
         now = self.clock.time()
         if now >= self.next_print:
             self._print_loop_status(
@@ -48,6 +49,7 @@ class RuntimeStatusDisplay:
                 leg_pitch_test=leg_pitch_test,
                 direction_test_start=direction_test_start,
                 direction_test_duration_s=direction_test_duration_s,
+                abd_flare_active=abd_flare_active,
             )
             self.next_print = now + self.print_interval_s
 
@@ -60,7 +62,8 @@ class RuntimeStatusDisplay:
                            joint_direction_test: bool, hip_abd_test: bool,
                            leg_pitch_test: bool, direction_test_start: float,
                            direction_test_duration_s: float,
-                           pose_hold_name: str | None = None) -> None:
+                           pose_hold_name: str | None = None,
+                           abd_flare_active: bool = False) -> None:
         if lie_down_hold:
             if pose_hold_name == "sit":
                 sys.stdout.write(
@@ -77,13 +80,17 @@ class RuntimeStatusDisplay:
             st = float(getattr(active_gait, "stance_ratio", 0.0))
             sh_r = float(getattr(active_gait, "step_height", 0.0))
             sh_f = float(getattr(active_gait, "step_height_front", sh_r) or sh_r)
+            # Stick is engage-only; don't display raw depth (misleading).
+            drive = "FWD" if cmd.vx > 0.15 else ("BWD" if cmd.vx < -0.15 else "—")
+            if abs(getattr(cmd, "turn", 0.0) or 0.0) > 0.12 and drive == "—":
+                drive = "TURN"
             sys.stdout.write(
                 f"\r  [{tag}]  h={height:.3f}m  T={active_gait.period:.2f}s  "
                 f"st={st:.0%}  "
                 f"amp=±{abs(active_gait.amp_front)*100:.1f}/"
                 f"{abs(active_gait.amp_rear)*100:.1f}cm  "
                 f"lift={sh_f*100:.1f}/{sh_r*100:.1f}cm"
-                f"{v_str}  stick={cmd.vx:+.2f}      "
+                f"{v_str}  drive={drive}      "
             )
         elif joint_direction_test:
             elapsed = self.clock.monotonic() - direction_test_start
@@ -105,9 +112,11 @@ class RuntimeStatusDisplay:
                     f" RL{imu_dz.get('rl',0)*1000:+.1f}"
                     f" RR{imu_dz.get('rr',0)*1000:+.1f}mm"
                 )
+            tag = "STAND+ABD" if abd_flare_active else "STAND"
+            hint = " a=收回外展" if abd_flare_active else " a=外展验证"
             sys.stdout.write(
-                f"\r  [STAND]  h={height:.3f}m  roll={roll_deg:+.1f}° "
-                f"input_vx={cmd.vx:+.2f}{dz_str}        "
+                f"\r  [{tag}]  h={height:.3f}m  roll={roll_deg:+.1f}° "
+                f"input_vx={cmd.vx:+.2f}{dz_str}{hint}        "
             )
         sys.stdout.flush()
 
