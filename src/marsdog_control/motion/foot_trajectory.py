@@ -92,7 +92,11 @@ def stance_anti_roll_lift(stance_t: float, anti_roll: float, diag_scale: float) 
 
 def lateral_offset_trot(t: float, period: float, stance_ratio: float,
                          lateral_sway: float) -> float:
-    """StableTrot/NaturalTrot: 横向 CoM 偏移, 与对角支撑严格同步。"""
+    """StableTrot/NaturalTrot: 横向 CoM 偏移, 与对角支撑严格同步。
+
+    半正弦在 TD/LO 边界归零——换腿瞬间重心回到中线，位控实机容易晃。
+    SoftTrot 请用 ``lateral_offset_soft_trot_com``（事件型保持幅值）。
+    """
     phase = (t / period) % 1.0
     sr = stance_ratio
     if phase < sr:
@@ -101,6 +105,50 @@ def lateral_offset_trot(t: float, period: float, stance_ratio: float,
     else:
         t_norm = (phase - sr) / (1.0 - sr)
         return -lateral_sway * math.sin(math.pi * t_norm)
+
+
+def trot_weight_shift_sign(phase: float, blend: float = 0.12) -> float:
+    """对角 SoftTrot 全局相位 → CoM 侧移符号。
+
+    2026-08 sim A/B: 旧约定 FL+RR→+Y 与对角自然 roll 同号叠加、roll 变差；
+    反相后 roll_rms/vy 显著下降。当前约定（正 com_shift_m）:
+
+      phase∈[0, 0.5): FL+RR 主支撑 → −1（身体右移 / −Y）
+      phase∈[0.5, 1): FR+RL 主支撑 → +1（身体左移 / +Y）
+
+    换腿窗口 smoothstep；支撑中期满幅。
+    """
+    p = phase % 1.0
+    w = max(1e-3, min(0.20, float(blend)))
+
+    def _ss(x: float) -> float:
+        x = 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
+        return x * x * (3.0 - 2.0 * x)
+
+    # Flipped vs first cut: hold −1 on FL+RR half, +1 on FR+RL half.
+    if p < 0.5 - w:
+        return -1.0
+    if p < 0.5 + w:
+        a = _ss((p - (0.5 - w)) / (2.0 * w))
+        return -1.0 * (1.0 - a) + 1.0 * a
+    if p < 1.0 - w:
+        return 1.0
+    a = _ss((p - (1.0 - w)) / w)
+    return 1.0 * (1.0 - a) + (-1.0) * a
+
+
+def lateral_offset_soft_trot_com(
+    t: float, period: float, sway_m: float, blend: float = 0.12,
+) -> float:
+    """SoftTrot 位控层横向质心/移重规划（事件型）。
+
+    ``lat_offset>0`` → 身体左移；``get_targets`` 里足端相对 body 取 ``-lat_offset``。
+    """
+    if abs(sway_m) <= 1e-9 or period <= 1e-9:
+        return 0.0
+    phase = (t / period) % 1.0
+    # sway_m<0 flips the diagonal side (A/B sign experiment).
+    return trot_weight_shift_sign(phase, blend) * float(sway_m)
 
 
 def lateral_offset_pace(t: float, period: float, stance_ratio: float,

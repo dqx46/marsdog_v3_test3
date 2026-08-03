@@ -122,7 +122,7 @@ def test_walk_schedule_scales_forward_only():
             throttle_min_scale=0.5,
         )
     )
-    full = sch.map(VelocityCommand(vx=1.0, yaw_rate=-1.0))
+    full = sch.map(VelocityCommand(vx=sch.max_forward_vx(), yaw_rate=-0.4))
     assert full.spot_turn is False
     assert full.turn_cmd == 0.0
     assert abs(full.amp_front - 0.054) < 1e-9

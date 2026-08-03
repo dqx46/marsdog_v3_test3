@@ -51,6 +51,9 @@ class GaitCliDefaults:
     reactive_kp: float = 0.0
     reactive_kd: float = 0.0
     lateral_sway: float = 0.0
+    # SoftTrot 横向质心规划 (m); >0 时用事件型移重，覆盖 half-sine lateral_sway
+    com_shift_m: float = 0.0
+    com_shift_blend: float = 0.12
     anti_roll: float = 0.003
     trot_roll_ff_neg_deg: float = 0.0
     trot_roll_ff_pos_deg: float = 0.0
@@ -167,6 +170,7 @@ def soft_trot_shape_keys() -> frozenset:
         "front_foot_swing_track", "front_foot_stance_push_deg",
         "swing_level",
         "swing_clearance_per_rad",
+        "com_shift_m", "com_shift_blend",
     })
 
 

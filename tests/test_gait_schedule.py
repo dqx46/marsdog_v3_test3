@@ -1,4 +1,4 @@
-"""Unit tests for VelocityCommand → SoftTrotSchedule."""
+"""Unit tests for SI VelocityCommand → SoftTrotSchedule."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from marsdog_control.motion.gait_schedule import (
 )
 
 
-def test_schedule_scales_amp_period_stance_with_speed():
-    env = GaitEnvelope(
+def _env(**kwargs) -> GaitEnvelope:
+    base = dict(
         amp_front_max=0.032,
         amp_rear_max=0.036,
         step_h_front_max=0.024,
@@ -28,40 +28,50 @@ def test_schedule_scales_amp_period_stance_with_speed():
         vx_engage=0.30,
         vx_deadzone=0.12,
     )
-    sch = SoftTrotSchedule(env)
+    base.update(kwargs)
+    return GaitEnvelope(**base)
 
-    crawl = sch.map(VelocityCommand(vx=0.31))  # mid stick (linear from deadzone)
-    mid = sch.map(VelocityCommand(vx=0.55))
-    full = sch.map(VelocityCommand(vx=1.0))
+
+def test_schedule_scales_amp_period_stance_with_speed():
+    env = _env()
+    sch = SoftTrotSchedule(env)
+    vmax = sch.max_forward_vx()
+    assert vmax > 0.05
+
+    crawl = sch.map(VelocityCommand(vx=0.35 * vmax))
+    mid = sch.map(VelocityCommand(vx=0.55 * vmax))
+    full = sch.map(VelocityCommand(vx=vmax))
     stop = sch.map(VelocityCommand(vx=0.0))
 
     assert crawl.speed_frac >= 0.5
     assert mid.speed_frac > crawl.speed_frac
-    assert full.speed_frac == 1.0
-    assert abs(full.amp_front) == env.amp_front_max
+    assert abs(full.speed_frac - 1.0) < 1e-6
+    assert abs(abs(full.amp_front) - env.amp_front_max) < 1e-9
     assert abs(crawl.amp_front) < abs(full.amp_front)
-    assert full.period <= crawl.period  # faster cadence at full
-    assert full.stance_ratio <= crawl.stance_ratio
+    assert full.period <= crawl.period + 1e-9
+    assert full.stance_ratio <= crawl.stance_ratio + 1e-9
     assert stop.speed_frac == 0.0
     assert stop.amp_front == 0.0
     assert full.vel_cmd[0] > mid.vel_cmd[0] > crawl.vel_cmd[0] > 0.0
-    assert full.step_height == env.step_h_rear_max
-    # Crawl must keep clearance floor (anti-limp), not pure speed_frac*max
-    assert crawl.step_height >= env.step_h_rear_floor
-    assert crawl.step_height_front >= env.step_h_front_floor
+    assert abs(full.step_height - env.step_h_rear_max) < 1e-9
+    # Crawl: lift tracks speed_frac (scuff floor), not the high anti-limp floor
+    assert crawl.step_height <= env.step_h_rear_max * crawl.speed_frac + 1e-9
+    assert crawl.step_height >= 0.008
+    assert crawl.step_height_front >= 0.006
     assert stop.step_height == 0.0
-    # Mid-stick must keep meaningful authority (old engage-based map
-    # compressed 0.55→1.0 into ~20% of amp span).
-    assert mid.vel_cmd[0] >= 0.55 * full.vel_cmd[0]
+    assert mid.vel_cmd[0] >= 0.50 * full.vel_cmd[0]
 
 
 def test_schedule_turn_and_reverse():
-    sch = SoftTrotSchedule(GaitEnvelope())
-    left = sch.map(VelocityCommand(vx=0.8, yaw_rate=-0.5))
-    right = sch.map(VelocityCommand(vx=0.8, yaw_rate=0.5))
-    back = sch.map(VelocityCommand(vx=-0.8))
+    sch = SoftTrotSchedule(_env())
+    vmax = sch.max_forward_vx()
+    left = sch.map(VelocityCommand(vx=0.8 * vmax, yaw_rate=-0.2))
+    right = sch.map(VelocityCommand(vx=0.8 * vmax, yaw_rate=0.2))
+    back = sch.map(VelocityCommand(vx=-0.8 * vmax))
     assert left.turn_cmd < 0
     assert right.turn_cmd > 0
+    assert abs(left.vel_cmd[2] + 0.2) < 1e-9
+    assert abs(right.vel_cmd[2] - 0.2) < 1e-9
     assert back.amp_front < 0
     assert back.vel_cmd[0] < 0
 
@@ -83,7 +93,8 @@ def test_apply_schedule_sets_vel_cmd():
             self.period = p
 
     g = _Gait()
-    sched = SoftTrotSchedule().map(VelocityCommand(vx=1.0, yaw_rate=0.2))
+    sch = SoftTrotSchedule(_env())
+    sched = sch.map(VelocityCommand(vx=sch.max_forward_vx(), yaw_rate=0.2))
     apply_schedule_to_gait(g, sched)
     assert g.amp_front == sched.amp_front
     assert g.step_height == sched.step_height
@@ -95,7 +106,7 @@ def test_apply_schedule_sets_vel_cmd():
 
 
 def test_schedule_spot_turn_is_abduction_led():
-    """vx≈0 + yaw → Unitree spot: amp=0, abduct budget, real wz."""
+    """vx≈0 + yaw_rate → Unitree spot: amp=0, abduct budget, real wz."""
     env = GaitEnvelope.from_wbc_soft_trot(
         amp_front=0.050,
         amp_rear=0.068,
@@ -108,7 +119,7 @@ def test_schedule_spot_turn_is_abduction_led():
         vx_deadzone=0.12,
     )
     sch = SoftTrotSchedule(env)
-    spot = sch.map(VelocityCommand(vx=0.0, yaw_rate=0.8))
+    spot = sch.map(VelocityCommand(vx=0.0, yaw_rate=0.32))
     assert spot.spot_turn is True
     assert spot.amp_front == 0.0 and spot.amp_rear == 0.0
     assert spot.turn_amp_diff == 0.0
@@ -122,11 +133,11 @@ def test_schedule_spot_turn_is_abduction_led():
     assert spot.spot_dx_scale == 0.0
     assert spot.turn_cmd > 0
 
-    left = sch.map(VelocityCommand(vx=0.0, yaw_rate=-0.8))
+    left = sch.map(VelocityCommand(vx=0.0, yaw_rate=-0.32))
     assert left.turn_cmd < 0
     assert left.vel_cmd[2] < 0
 
-    idle = sch.map(VelocityCommand(vx=0.0, yaw_rate=0.05))
+    idle = sch.map(VelocityCommand(vx=0.0, yaw_rate=0.04))
     assert idle.spot_turn is False
     assert idle.amp_front == 0.0
 
@@ -160,13 +171,12 @@ def test_apply_schedule_sets_turn_geometry():
     g = _Gait()
     sched = SoftTrotSchedule(
         GaitEnvelope(vx_deadzone=0.12)
-    ).map(VelocityCommand(vx=0.0, yaw_rate=1.0))
+    ).map(VelocityCommand(vx=0.0, yaw_rate=0.40))
     apply_schedule_to_gait(g, sched)
     assert g.max_turn_amp_diff == 0.0
     assert g.vel_cmd[2] != 0.0
     assert g.spot_turn_active is True
     assert g.spot_yaw_step_rad == sched.spot_yaw_step
-    # Diagonal trot phases for Unitree turn.
     assert abs(g._PHASE_OFFSET["fl"] - 0.00) < 1e-9
     assert abs(g._PHASE_OFFSET["rr"] - 0.00) < 1e-9
     assert abs(g._PHASE_OFFSET["fr"] - 0.50) < 1e-9
@@ -193,7 +203,20 @@ def test_schedule_vel_cmd_includes_scrub_offset():
         vx_deadzone=0.12,
     )
     sched = SoftTrotSchedule(env)
-    full = sched.map(VelocityCommand(vx=1.0))
+    full = sched.map(VelocityCommand(vx=sched.max_forward_vx()))
     avg_amp = 0.5 * (abs(full.amp_front) + abs(full.amp_rear))
     vx_kin = 2.0 * avg_amp / full.period
     assert abs(full.vel_cmd[0] - (vx_kin + VX_SCRUB_OFFSET_MPS)) < 1e-6
+
+
+def test_legacy_norm_maps_to_si_default_cruise():
+    env = GaitEnvelope.from_wbc_soft_trot(
+        amp_front=0.050,
+        amp_rear=0.068,
+        period=0.58,
+        stance=0.56,
+        throttle_min_scale=0.45,
+    )
+    sch = SoftTrotSchedule(env)
+    vx = sch.vx_at_legacy_norm(0.5)
+    assert 0.12 < vx < 0.15

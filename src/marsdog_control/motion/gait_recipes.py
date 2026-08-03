@@ -306,6 +306,14 @@ def build_controller_set(
                 np.get("rear_clearance_m", getattr(cfg, "rear_clearance_m", 0.0))
                 if np else getattr(cfg, "rear_clearance_m", 0.0)
             ),
+            com_shift_m=(
+                np.get("com_shift_m", getattr(cfg, "com_shift_m", 0.0))
+                if np else getattr(cfg, "com_shift_m", 0.0)
+            ),
+            com_shift_blend=(
+                np.get("com_shift_blend", getattr(cfg, "com_shift_blend", 0.12))
+                if np else getattr(cfg, "com_shift_blend", 0.12)
+            ),
         )
 
     nat_fwd = natural_cls(
@@ -600,6 +608,9 @@ NATURAL_SOFT_TROT_REAL = {
     "retract_rear": 0.014,
     "tarsus_swing_deg": 0.0,
     "swing_clearance_per_rad": 0.35,
+    # 横向质心：REAL 默认关；大步 SoftTrot(WBC 几何预设) 再开 com_shift_m
+    "com_shift_m": 0.0,
+    "com_shift_blend": 0.12,
     # ── 前脚朝向跟踪 (支撑相脚尖指地 -78°, 摆动相关闭让 tarsus 翻爪) ──
     "front_thrust_gain": 1.0,
     "front_thrust_swing_gain": 1.0,
@@ -631,37 +642,40 @@ NATURAL_SOFT_TROT_REAL = {
     "td_imu_freeze_i": True,
 }
 
-# WBC+MPC — 路线 B：真狗小跑 (diagonal trot)
-# duty≈0.56、T≈0.58s、后驱；满杆包络收紧避免 st→0.50 翻车
-# Dog-trot WBC: light cadence + rear drive. Front swing must clear ground —
-# mid-stick step_h_front≈2cm left ~92% swing-drag and stalled after first strides.
-# 2026-08-02: period/step_h 对齐此前仿真满意组 (0.58s / 4.8cm)，其余软化项保持。
+# SoftTrot 统一几何（仿真/真机 walk_startup 灌此 dict；含无 WBC 阻抗基线）。
+# 2026-08-03 阻抗无头网格 (scripts/tune_soft_trot_impedance.py, 137 case):
+#   旧 0.58/st0.56/h4.8/com25 → vz_pk~0.42 崩跳大、真机偏快
+#   瞎改 0.88/st0.66/h3.2/com10 → roll_pk~13 / vy_pk~0.45 最差
+#   最优折中 T0.72/st0.68/h3.4/com16：score 最优，vz_pk~0.10，roll_pk~8
 NATURAL_SOFT_TROT_WBC = {
     **NATURAL_SOFT_TROT_REAL,
-    "amp_front": 0.050,
-    "amp_rear": 0.068,
-    "nat_amp_front": 0.050,
-    "nat_amp_rear": 0.068,
-    "step_h": 0.048,
-    "nat_step_h": 0.048,
-    "step_h_front": 0.045,
-    "fwd_front_lift": 0.045,
-    "period": 0.58,
-    "nat_period": 0.58,
-    "stance": 0.56,
+    "amp_front": 0.039,
+    "amp_rear": 0.052,
+    "nat_amp_front": 0.039,
+    "nat_amp_rear": 0.052,
+    "step_h": 0.034,
+    "nat_step_h": 0.034,
+    "step_h_front": 0.030,
+    "fwd_front_lift": 0.030,
+    "period": 0.72,
+    "nat_period": 0.72,
+    "stance": 0.68,
     "fwd_front_amp_scale": 1.0,
-    "lateral_sway": 0.0025,
+    # 事件型移重：同网格在 T0.72/st0.68 下 com=16mm 优于 0/8/12/20
+    "com_shift_m": 0.016,
+    "com_shift_blend": 0.12,
+    "lateral_sway": 0.0,
     "anti_roll": 0.0,
     "trot_roll_ff_neg_deg": 0.0,
     "trot_roll_ff_pos_deg": 0.0,
     "anti_roll_soft_scale": 0.0,
-    "retract_front": 0.010,
+    "retract_front": 0.012,
     "retract_rear": 0.010,
-    "retract_peak": 0.52,
-    "lift_peak": 0.52,
-    # 支撑相 Z bump 仍关（次要）；主因是换腿窗口 foot_pitch/imu_dz 门控过陡
-    "toeoff_lift": 0.0,
-    "touchdown_compress": 0.0,
+    "retract_peak": 0.40,
+    "lift_peak": 0.46,
+    # 轻触地压缩 + 微量离地，压低换腿冲击（阻抗路径尤其需要）
+    "toeoff_lift": 0.001,
+    "touchdown_compress": 0.003,
     # 换腿窗口折中：略放回换相速度消“顿”，仍保留足够门控防“震”
     "front_foot_swing_track": 0.35,
     "front_foot_stance_push_deg": 4.0,
@@ -672,7 +686,7 @@ NATURAL_SOFT_TROT_WBC = {
     "spine_yaw_deg": 2.2,
     "spine_roll_deg": 1.0,
     "throttle_min_scale": 0.45,
-    "rear_clearance_m": 0.012,
+    "rear_clearance_m": 0.008,
     # Spot-turn / cruise turn: abduction Y is primary; amp_diff only for curved walk
     "turn_y_amp": 0.040,
     "turn_amp_diff": 0.012,

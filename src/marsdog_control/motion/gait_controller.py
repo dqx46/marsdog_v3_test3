@@ -1050,6 +1050,7 @@ class NaturalSoftTrot(NaturalTrot):
       2. stance/swing 都使用 minimum-jerk 轨迹，端点速度/加速度为 0。
       3. 触地初期先微缩腿吸震，再温和承重，不用 anti_roll 硬压腿长。
       4. 前腿 tarsus 翻爪改成整段 C2 小幅收放，落地前回到 0。
+      5. 位控层横向质心规划 (com_shift_m>0)：换腿前把 CoM 压到支撑对角侧。
     """
 
     _PHASE_OFFSET = {'fl': 0.00, 'rr': 0.06, 'fr': 0.50, 'rl': 0.56}
@@ -1063,6 +1064,8 @@ class NaturalSoftTrot(NaturalTrot):
                  retract_peak: float = 0.38,
                  lift_peak: float = 0.45,
                  rear_clearance_m: float = 0.0,
+                 com_shift_m: float = 0.0,
+                 com_shift_blend: float = 0.12,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.touchdown_compress = touchdown_compress
@@ -1072,6 +1075,23 @@ class NaturalSoftTrot(NaturalTrot):
         self.lift_peak = lift_peak
         # Raise rear hip-frame Z so feet clear ground (rear hip ~16mm lower than front).
         self.rear_clearance_m = float(rear_clearance_m)
+        # Lateral CoM / weight-shift (m). >0 replaces half-sine lateral_sway.
+        self.com_shift_m = float(com_shift_m)
+        self.com_shift_blend = float(com_shift_blend)
+
+    def _lateral_offset(self, t: float) -> float:
+        """SoftTrot 横向移重：优先事件型 com_shift，否则回退半正弦 lateral_sway。"""
+        if getattr(self, "spot_turn_active", False):
+            return 0.0
+        if abs(self.com_shift_m) > 1e-6:
+            return _ft.lateral_offset_soft_trot_com(
+                t, self.period, self.com_shift_m, self.com_shift_blend)
+        return _ft.lateral_offset_trot(
+            t, self.period, self.stance_ratio, self.lateral_sway)
+
+    def get_com_y_shift(self, t: float) -> float:
+        """Body +Y CoM shift for logging / future MPC reference."""
+        return self._lateral_offset(t)
 
     @staticmethod
     def _mj(u: float) -> float:

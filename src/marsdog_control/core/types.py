@@ -66,8 +66,8 @@ class UserCommand:
     调参键(IMU kp / 重力补偿 / 配平 / 体高 / 摆幅 / 步频等)不进这里, 走开发调试旁路,
     因为它们不是上机安全关键路径。
     """
-    vx: float = 0.0                              # 前进油门 -1..1 (正=前进)
-    turn: float = 0.0                            # 转向 -1..1
+    vx: float = 0.0                              # 手柄前进轴 -1..1 (正=前进); SI 速度由 teleop 策略换算
+    turn: float = 0.0                            # 手柄转向轴 -1..1
     request_mode: Optional[RobotMode] = None     # 本周期请求切到的模式(按钮/键沿触发)
     request_dir: Optional[Direction] = None
     pace: bool = False                           # 手柄 dpad 触发 pace 意图

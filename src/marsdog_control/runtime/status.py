@@ -83,7 +83,7 @@ class RuntimeStatusDisplay:
                 f"amp=±{abs(active_gait.amp_front)*100:.1f}/"
                 f"{abs(active_gait.amp_rear)*100:.1f}cm  "
                 f"lift={sh_f*100:.1f}/{sh_r*100:.1f}cm"
-                f"{v_str}  input_vx={cmd.vx:+.2f}      "
+                f"{v_str}  stick={cmd.vx:+.2f}      "
             )
         elif joint_direction_test:
             elapsed = self.clock.monotonic() - direction_test_start

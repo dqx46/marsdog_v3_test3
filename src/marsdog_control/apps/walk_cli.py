@@ -75,9 +75,10 @@ def parse_args():
     p.add_argument("--cruise-turn-scale", type=float, default=GAIT.cruise_turn_scale,
                    help="[走+转] 边走边转时的转向权限缩放(相对原地转), 越大转得越急, "
                         "默认0.6; 原地转(只右摇杆)不受影响")
-    p.add_argument("--cruise-vx", type=float, default=0.5,
-                   help="[前进] 摇杆只做走/停开关: 一旦过起步阈值, 固定用该巡航油门 "
-                        "(与仿真 --vx 对齐, 默认 0.5); 推杆深浅不再改变摆幅/周期")
+    p.add_argument("--cruise-vx", type=float, default=0.100,
+                   help="[前进] 巡航速度 m/s (SI)。摇杆只做走/停: 过阈值后固定用该速度 "
+                        "(与仿真 --vx 对齐, 默认 0.10≈新菜谱中速; 满幅约 0.13); "
+                        "推杆深浅不改步态。半速试: --cruise-vx 0.067")
     p.add_argument("--cruise-turn-yamp", type=float, default=GAIT.cruise_turn_yamp,
                    help="[走+转] 边走边转的横向跨步(蟹步)增益, hip改线修正后蟹步与差速同向"
                         "帮助转向, 默认1.0; 若仍斜行可降到0试纯差速")
@@ -167,7 +168,14 @@ def parse_args():
                    help="前进套用后退配方(周期/抬腿/前后幅度分布/+髋外展), 仅方向朝前, 更稳; "
                         "默认开, --no-fwd-use-bwd 关")
     p.add_argument("--lateral-sway", type=float, default=GAIT.lateral_sway,
-                   help="横向重心摆动幅度 (m), 默认 15mm")
+                   help="横向重心摆动幅度 (m), 半正弦旧法; SoftTrot 有 --com-shift 时忽略")
+    p.add_argument("--com-shift", type=float, default=GAIT.com_shift_m,
+                   dest="com_shift_m", metavar="M",
+                   help="[位控·质心] SoftTrot 横向移重 (m); |M|>0=事件型对角移重心。"
+                        "正=FL+RR→右(sim更稳); 负=反相。默认菜谱 0.016；0=关")
+    p.add_argument("--com-shift-blend", type=float, default=GAIT.com_shift_blend,
+                   dest="com_shift_blend", metavar="PHASE",
+                   help="[位控·质心] 对角换腿 smoothstep 半宽 (相位 0~0.2), 默认 0.12")
     p.add_argument("--pace-period", type=float, default=GAIT.pace_period,
                    help="Pace 步态周期 (s), 默认 1.2 (慢速保稳)")
     p.add_argument("--pace-stance", type=float, default=GAIT.pace_stance,

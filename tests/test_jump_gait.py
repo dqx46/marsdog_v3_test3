@@ -82,8 +82,8 @@ def test_jump_flight_zero_force_scale():
 
 
 def test_jump_schedule_trigger_and_isolation():
-    sched = JumpSchedule(vx_deadzone=0.12)
-    out = sched.map(VelocityCommand(vx=0.5, yaw_rate=0.9))
+    sched = JumpSchedule(vx_engage_mps=0.02)
+    out = sched.map(VelocityCommand(vx=0.134, yaw_rate=0.9))
     assert out.trigger is True
     assert out.auto_rejump is True
     # yaw ignored
@@ -100,7 +100,8 @@ def test_jump_schedule_trigger_and_isolation():
     soft_env = GaitEnvelope.from_wbc_soft_trot(
         amp_front=0.05, amp_rear=0.06, period=0.6, stance=0.55,
     )
-    soft_out = SoftTrotSchedule(soft_env).map(VelocityCommand(vx=0.8, yaw_rate=0.0))
+    soft = SoftTrotSchedule(soft_env)
+    soft_out = soft.map(VelocityCommand(vx=soft.max_forward_vx(), yaw_rate=0.0))
     before = (j.amp_front, j.period, j.stance_ratio)
     apply_schedule_to_gait(j, soft_out)
     assert (j.amp_front, j.period, j.stance_ratio) == before
@@ -167,7 +168,7 @@ def test_walk_and_soft_schedules_still_green():
             amp_front=0.05, amp_rear=0.06, period=1.0, stance=0.75,
         )
     )
-    out = walk.map(VelocityCommand(vx=0.6, yaw_rate=0.5))
+    out = walk.map(VelocityCommand(vx=0.5 * walk.max_forward_vx(), yaw_rate=0.5))
     assert out.spot_turn is False
     assert out.turn_cmd == 0.0
     assert out.amp_front > 0.0

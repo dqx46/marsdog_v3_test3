@@ -212,6 +212,23 @@ def prepare_walk_startup(
                 f"[cadence] SoftTrot T={T:.3f}s  f={1.0 / T:.2f} Hz  "
                 f"stance={st:.2f} (swing={1.0 - st:.2f})"
             )
+        com_m = float(getattr(args, "com_shift_m",
+                              natural_params.get("com_shift_m", 0.0)))
+        if abs(com_m) > 1e-6:
+            blend = float(getattr(args, "com_shift_blend",
+                                  natural_params.get("com_shift_blend", 0.12)))
+            sign_note = "正=FL+RR→右(反相优)" if com_m > 0 else "负=旧同号方向"
+            print(
+                f"[COM] SoftTrot 横向移重 com_shift={com_m*1000:+.1f}mm "
+                f"blend={blend:.2f} ({sign_note}; --com-shift 0 关闭)"
+            )
+        else:
+            sway = float(getattr(args, "lateral_sway",
+                                 natural_params.get("lateral_sway", 0.0)))
+            print(
+                f"[COM] SoftTrot 横向移重 OFF "
+                f"(回退 lateral_sway={sway*1000:.1f}mm 半正弦)"
+            )
 
     walk_params = dict(
         NATURAL_WALK_WBC if bool(getattr(args, "wbc", False)) else NATURAL_WALK_REAL

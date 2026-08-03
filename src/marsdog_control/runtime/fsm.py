@@ -26,6 +26,11 @@ from typing import Dict, Optional, Set
 
 from marsdog_control.config.stack_build import FsmDriveConfig
 from marsdog_control.core.types import Direction, RobotMode, RobotState, UserCommand
+from marsdog_control.input.teleop_policy import (
+    TeleopPolicy,
+    stick_to_body_velocity,
+    stick_yaw_to_rate,
+)
 from marsdog_control.motion.gait_controller import JumpPhase
 from marsdog_control.motion.gait_schedule import (
     SoftTrotSchedule,
@@ -142,9 +147,7 @@ class RuntimeStateMachine:
                 vx_deadzone=float(drive.gp_deadzone),
             )
         )
-        self._jump_schedule = JumpSchedule(
-            vx_deadzone=float(drive.gp_deadzone),
-        )
+        self._jump_schedule = JumpSchedule(vx_engage_mps=0.02)
         self._trot_schedule = SoftTrotSchedule(
             GaitEnvelope.from_wbc_soft_trot(
                 amp_front=fwd_amp_front,
@@ -340,25 +343,31 @@ class RuntimeStateMachine:
                 self.request_transition(RobotMode.STAND, targets_now=last_targets,
                                         blend_time=0.6)
 
-    def _stick_cruise_vx(self, stick_vx: float) -> float:
-        """Map stick deflection → fixed cruise command (sign only from stick).
+    def _teleop_policy(self) -> TeleopPolicy:
+        a = self.drive
+        return TeleopPolicy(
+            cruise_vx_mps=max(0.0, float(a.cruise_vx)),
+            yaw_rate_max=float(getattr(a, "yaw_rate_max", 0.40)),
+            engage_threshold=float(a.gp_trot_threshold),
+            deadzone=float(a.gp_deadzone),
+            mode="engage_cruise",
+        )
 
-        Real/sim gamepad is engage-only: any |vx| above threshold uses
-        ``drive.cruise_vx`` (default 0.5 = sim ``--vx 0.5``). Stick depth
-        must not change SoftTrot amp/period.
-        """
-        cruise = max(0.0, min(1.0, float(self.drive.cruise_vx)))
-        if stick_vx == 0.0:
-            return 0.0
-        return math.copysign(cruise, stick_vx)
+    def _stick_cruise_vx(self, stick_vx: float) -> float:
+        """Stick → signed teleop cruise speed [m/s] (engage-only, depth ignored)."""
+        body = stick_to_body_velocity(stick_vx, 0.0, policy=self._teleop_policy())
+        return float(body.vx)
 
     def _apply_stick_drive(self, state: RobotState, cmd: UserCommand, last_targets):
         a = self.drive
-        vx = cmd.vx
-        rx = cmd.turn
+        stick_vx = cmd.vx
+        stick_yaw = cmd.turn
         thr = a.gp_trot_threshold
         deadzone = a.gp_deadzone
-        has_walk = abs(vx) > thr
+        has_walk = abs(stick_vx) > thr
+        body = stick_to_body_velocity(
+            stick_vx, stick_yaw, policy=self._teleop_policy()
+        )
 
         # 2a) 手柄 dpad = pace
         if cmd.pace and cmd.request_dir is not None:
@@ -369,41 +378,40 @@ class RuntimeStateMachine:
                                         targets_now=last_targets, blend_time=0.4)
             return
 
-        # 2b) 推杆前进/后退 -> 进入 walk_mode（深度忽略，固定 cruise_vx）
+        # 2b) 推杆前进/后退 → teleop SI 巡航 → schedule（深度忽略）
         if has_walk:
-            cruise_vx = self._stick_cruise_vx(vx)
-            self.throttle = cruise_vx
+            self.throttle = body.vx
             if self.walk_mode is RobotMode.JUMP:
                 if self.mode is not RobotMode.JUMP:
                     b_time = 0.05  # Fast blend for jump to avoid suppressing it
                     self.request_transition(RobotMode.JUMP, Direction.FWD,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_jump_throttle(cruise_vx)
+                self._apply_jump_throttle(body.vx)
             elif self.walk_mode is RobotMode.WALK:
-                new_dir = Direction.FWD if vx > 0 else Direction.BWD
+                new_dir = Direction.FWD if stick_vx > 0 else Direction.BWD
                 if self.mode is not RobotMode.WALK or self.direction is not new_dir:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.WALK, new_dir,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_walk_throttle(cruise_vx)
+                self._apply_walk_throttle(body.vx)
             elif self.walk_mode is RobotMode.NATURAL:
-                new_dir = Direction.FWD if vx > 0 else Direction.BWD
+                new_dir = Direction.FWD if stick_vx > 0 else Direction.BWD
                 if self.mode is not RobotMode.NATURAL or self.direction is not new_dir:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.NATURAL, new_dir,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_natural_throttle(state, cruise_vx, rx)
+                self._apply_natural_throttle(state, body.vx, stick_yaw)
             else:
-                new_dir = Direction.FWD if vx > 0 else Direction.BWD
+                new_dir = Direction.FWD if stick_vx > 0 else Direction.BWD
                 if self.mode is not RobotMode.TROT or self.direction is not new_dir:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.TROT, new_dir,
                                             targets_now=last_targets, blend_time=b_time)
-                self._apply_trot_throttle(state, cruise_vx, rx)
+                self._apply_trot_throttle(state, body.vx, stick_yaw)
             return
 
         # 2c) 只有转向摇杆 = 原地转（Walk/Jump v1 不接管；保持站立，请切 SoftTrot）
-        if abs(rx) > deadzone:
+        if abs(stick_yaw) > deadzone:
             if self.walk_mode is RobotMode.WALK or self.walk_mode is RobotMode.JUMP:
                 self.throttle = 0.0
                 if self.mode is not RobotMode.STAND:
@@ -411,13 +419,18 @@ class RuntimeStateMachine:
                                             blend_time=0.6)
                 return
             self.throttle = 0.0
+            yaw_rate = stick_yaw_to_rate(
+                stick_yaw,
+                yaw_rate_max=float(getattr(a, "yaw_rate_max", 0.40)),
+                deadzone=0.0,  # already past deadzone
+            )
             if self.walk_mode is RobotMode.NATURAL:
                 if self.mode is not RobotMode.NATURAL or self.direction is not Direction.FWD:
                     b_time = 0.6 if self.mode is RobotMode.STAND else 0.3
                     self.request_transition(RobotMode.NATURAL, Direction.FWD,
                                             targets_now=last_targets, blend_time=b_time)
                 sched = self._nat_schedule.map(
-                    VelocityCommand(vx=0.0, yaw_rate=rx)
+                    VelocityCommand(vx=0.0, yaw_rate=yaw_rate)
                 )
                 apply_schedule_to_gait(self.nat_fwd, sched)
             else:
@@ -426,7 +439,7 @@ class RuntimeStateMachine:
                     self.request_transition(RobotMode.TROT, Direction.FWD,
                                             targets_now=last_targets, blend_time=b_time)
                 sched = self._trot_schedule.map(
-                    VelocityCommand(vx=0.0, yaw_rate=rx)
+                    VelocityCommand(vx=0.0, yaw_rate=yaw_rate)
                 )
                 apply_schedule_to_gait(self.trot_fwd, sched)
             return
@@ -454,67 +467,68 @@ class RuntimeStateMachine:
             self.request_transition(RobotMode.STAND, targets_now=last_targets,
                                     blend_time=0.6)
 
-    def _apply_jump_throttle(self, vx: float):
-        """摇杆油门 → JumpSchedule → jump_fwd（原地 hop；忽略 yaw）。"""
-        sched = self._jump_schedule.map(VelocityCommand(vx=vx, yaw_rate=0.0))
-        apply_jump_schedule(self.jump_fwd, sched)
-        self.jump_fwd.spot_turn_active = False
-
-    def _apply_walk_throttle(self, vx: float):
-        """摇杆油门 → WalkSchedule → walk_fwd（直行；忽略 yaw）。"""
-        sched = self._walk_schedule.map(VelocityCommand(vx=vx, yaw_rate=0.0))
-        apply_schedule_to_gait(self.walk_fwd, sched)
-        self.walk_fwd.spot_turn_active = False
-
-    def _apply_natural_throttle(self, state: RobotState, vx: float, rx: float):
-        """摇杆油门/转向 → SoftTrotSchedule → nat_fwd (amp/period/stance/vel_cmd)。"""
+    def _yaw_rate_from_stick(self, state: RobotState, vx_mps: float, stick_yaw: float) -> float:
+        """Stick yaw (+ optional yaw-hold) → rad/s for schedule."""
         a = self.drive
         deadzone = a.gp_deadzone
-        yaw_cmd = rx
-        if vx >= 0 and a.yaw_hold and abs(rx) <= deadzone and state.imu_connected:
+        yaw_stick = stick_yaw
+        if vx_mps >= 0 and a.yaw_hold and abs(stick_yaw) <= deadzone and state.imu_connected:
             if self._yaw_target is None:
                 self._yaw_target = state.yaw
             _err = math.degrees(_wrap_rad(state.yaw - self._yaw_target))
             _rate = math.degrees(state.gyro_yaw)
             _auto = a.yaw_hold_sign * (a.yaw_hold_kp * _err + a.yaw_hold_kd * _rate)
             _lim = a.yaw_hold_limit
-            yaw_cmd = max(-_lim, min(_lim, _auto))
+            yaw_stick = max(-_lim, min(_lim, _auto))
         elif state.imu_connected:
             self._yaw_target = state.yaw
+        return stick_yaw_to_rate(
+            yaw_stick,
+            yaw_rate_max=float(getattr(a, "yaw_rate_max", 0.40)),
+            deadzone=0.0 if a.yaw_hold and abs(stick_yaw) <= deadzone else deadzone,
+        )
 
-        sched = self._nat_schedule.map(VelocityCommand(vx=vx, yaw_rate=yaw_cmd))
+    def _apply_jump_throttle(self, vx_mps: float):
+        """Body vx [m/s] → JumpSchedule → jump_fwd（原地 hop；忽略 yaw）。"""
+        sched = self._jump_schedule.map(VelocityCommand(vx=vx_mps, yaw_rate=0.0))
+        apply_jump_schedule(self.jump_fwd, sched)
+        self.jump_fwd.spot_turn_active = False
+
+    def _apply_walk_throttle(self, vx_mps: float):
+        """Body vx [m/s] → WalkSchedule → walk_fwd（直行；忽略 yaw）。"""
+        sched = self._walk_schedule.map(VelocityCommand(vx=vx_mps, yaw_rate=0.0))
+        apply_schedule_to_gait(self.walk_fwd, sched)
+        self.walk_fwd.spot_turn_active = False
+
+    def _apply_natural_throttle(self, state: RobotState, vx_mps: float, stick_yaw: float):
+        """SI vx + stick yaw → SoftTrotSchedule → nat_fwd."""
+        yaw_rate = self._yaw_rate_from_stick(state, vx_mps, stick_yaw)
+        sched = self._nat_schedule.map(VelocityCommand(vx=vx_mps, yaw_rate=yaw_rate))
         apply_schedule_to_gait(self.nat_fwd, sched)
 
-    def _apply_trot_throttle(self, state: RobotState, vx: float, rx: float):
-        """线性油门 → SoftTrotSchedule（前进）/ 兼容后退缩放。"""
+    def _apply_trot_throttle(self, state: RobotState, vx_mps: float, stick_yaw: float):
+        """SI vx → SoftTrotSchedule（前进）/ 后退缩放。"""
         a = self.drive
-        deadzone = a.gp_deadzone
 
         if self.direction is Direction.FWD:
-            yaw_cmd = rx
-            if a.yaw_hold and abs(rx) <= deadzone and state.imu_connected:
-                if self._yaw_target is None:
-                    self._yaw_target = state.yaw
-                _err = math.degrees(_wrap_rad(state.yaw - self._yaw_target))
-                _rate = math.degrees(state.gyro_yaw)
-                _auto = a.yaw_hold_sign * (a.yaw_hold_kp * _err + a.yaw_hold_kd * _rate)
-                _lim = a.yaw_hold_limit
-                yaw_cmd = max(-_lim, min(_lim, _auto))
-            elif state.imu_connected:
-                self._yaw_target = state.yaw
-            sched = self._trot_schedule.map(VelocityCommand(vx=vx, yaw_rate=yaw_cmd))
+            yaw_rate = self._yaw_rate_from_stick(state, vx_mps, stick_yaw)
+            sched = self._trot_schedule.map(VelocityCommand(vx=vx_mps, yaw_rate=yaw_rate))
             apply_schedule_to_gait(self.trot_fwd, sched)
         else:
-            thr = a.gp_trot_threshold
-            _mag = min(1.0, abs(vx))
-            _span = 1.0 - thr
-            _norm = (_mag - thr) / _span if _span > 1e-6 else 1.0
-            _norm = max(0.0, min(1.0, _norm))
-            a_scale = a.throttle_min_scale + (1.0 - a.throttle_min_scale) * _norm
+            vmax = max(1e-6, self._trot_schedule.max_forward_vx())
+            frac = max(0.0, min(1.0, abs(float(vx_mps)) / vmax))
+            a_scale = a.throttle_min_scale + (1.0 - a.throttle_min_scale) * frac
             self.trot_bwd.amp_front = -a.amp_rear * a.bwd_amp_scale * a_scale
             self.trot_bwd.amp_rear = -a.amp_front * a.bwd_amp_scale * a_scale
             self.trot_bwd.turn_y_gain = a.cruise_turn_yamp
-            self.trot_bwd.turn_cmd = rx * a.cruise_turn_scale
+            yaw_rate = stick_yaw_to_rate(
+                stick_yaw,
+                yaw_rate_max=float(getattr(a, "yaw_rate_max", 0.40)),
+                deadzone=a.gp_deadzone,
+            )
+            self.trot_bwd.turn_cmd = (
+                (yaw_rate / 0.40) * a.cruise_turn_scale if abs(yaw_rate) > 1e-9 else 0.0
+            )
             avg = 0.5 * (abs(self.trot_bwd.amp_front) + abs(self.trot_bwd.amp_rear))
             period = float(getattr(self.trot_bwd, "period", 0.9))
-            self.trot_bwd.vel_cmd = (-2.0 * avg / max(1e-3, period), 0.0, 0.0)
+            self.trot_bwd.vel_cmd = (-2.0 * avg / max(1e-3, period), 0.0, float(yaw_rate))

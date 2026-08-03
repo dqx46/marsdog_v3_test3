@@ -161,8 +161,9 @@ def main():
     # 无头默认 5s，避免挂死。
     duration_s = 5.0
     duration_explicit = False
-    # 默认与真机 cruise_vx 对齐；原地转: --vx 0 --turn 0.8
-    drive_vx = 0.5
+    # 默认与真机 cruise_vx (SI m/s) 对齐；原地转: --vx 0 --turn 0.8
+    # 0.10 m/s ≈ 新菜谱中速；半速 --vx 0.067；偏快满幅 --vx 0.13
+    drive_vx = 0.10
     drive_turn = 0.0
     filtered = []
     i = 1
@@ -245,7 +246,9 @@ def main():
     ):
         forced.extend(["--base-estimate-mode", "estimator"])
 
-    sys.argv = [sys.argv[0]] + forced + filtered
+    # Inject SI cruise so assemble/teleop banner matches sim --vx.
+    cruise_flags = ["--cruise-vx", f"{abs(float(drive_vx)):.6g}"]
+    sys.argv = [sys.argv[0]] + forced + cruise_flags + filtered
     args = parse_args()
     sys.argv = old_argv
 
@@ -254,6 +257,10 @@ def main():
         args, runtime_state=runtime_state, joint_gains=SIM_JOINT_GAINS)
     print(
         "[Sim] using SIM_JOINT_GAINS (SI impedance; real Incos 35/2.5 not applied)"
+    )
+    print(
+        f"[Sim] --vx {drive_vx:.3f} → cruise_vx={abs(float(drive_vx)):.3f} m/s "
+        f"(中速默认 0.10；满幅约 0.13；半速 0.067)"
     )
 
     # 仿真侧：达妙无真实反馈，用固定目标占位，避免 status 误报 disabled
@@ -297,10 +304,13 @@ def main():
     fsm = stack.fsm
     safety = stack.safety
     imu_ctrl = stack.imu_ctrl
-    # Sim CLI --vx 同时设为固定巡航油门（与真机摇杆开关语义一致）
+    # Sim CLI --vx = teleop cruise speed [m/s]（与真机摇杆走/停语义一致）
     from dataclasses import replace
-    fsm.drive = replace(fsm.drive, cruise_vx=max(0.0, min(1.0, abs(float(drive_vx)))))
-    print(f"[Sim] fixed cruise_vx={fsm.drive.cruise_vx:.2f} (stick depth ignored)")
+    fsm.drive = replace(fsm.drive, cruise_vx=max(0.0, abs(float(drive_vx))))
+    print(
+        f"[Sim] teleop cruise_vx={fsm.drive.cruise_vx:.3f} m/s "
+        f"(SI; stick depth ignored)"
+    )
 
     # 3. Backend（用 recipe 站高初始化，避免默认 0.22m 与 gait 不一致）
     # Jump: slightly harder foot contact so push force doesn't bury soft soles.
@@ -339,8 +349,8 @@ def main():
             cmd.request_mode = target
             print(f"[Sim] Auto-triggering {target.value} via UserCommand...")
         if fake_poll.tick > 200:
-            # 模拟真机摇杆: 过阈值就顶满；实际摆幅/周期由 fsm.drive.cruise_vx 固定
-            if abs(drive_vx) > 1e-6:
+            # 模拟真机摇杆 engage；实际速度由 teleop→cruise_vx(m/s)→schedule
+            if abs(drive_vx) > 1e-9:
                 cmd.vx = 1.0 if drive_vx > 0 else -1.0
             else:
                 cmd.vx = 0.0

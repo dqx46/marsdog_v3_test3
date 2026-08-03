@@ -1,7 +1,10 @@
-"""Velocity command → gait schedule (sim-first locomotion API).
+"""Body velocity (SI) → gait schedule (sim-first locomotion API).
 
-Replaces ad-hoc amp-only throttle with a single map:
-  VelocityCommand(vx, yaw_rate) → amps, period, stance, step_h, turn, vel_cmd(SI)
+Single map:
+  VelocityCommand(vx[m/s], yaw_rate[rad/s]) → amps, period, stance, step_h, turn, vel_cmd
+
+Stick (−1..1) mapping lives in ``input.teleop_policy`` only. This module never
+interprets gamepad percentages.
 
 Spot turn (vx≈0, yaw≠0): Unitree-style continuous diagonal trot with
 body-frame yaw scrub + explicit hip abduction (``SpotYawStepper``),
@@ -10,8 +13,8 @@ open-loop accumulating yaw, plus real ``vel_cmd.wz``. Cruise trot unchanged.
 Callers (FSM) apply ``GaitScheduleOutput`` onto the live gait controller.
 WBC reads ``gait.vel_cmd`` instead of reverse-engineering amp/period.
 
-Stick map: linear from ``vx_deadzone`` → 1.0 into ``speed_frac``
-(``throttle_min_scale`` … 1). ``vx_engage`` is FSM-only (do not reuse here).
+``throttle_min_scale`` shapes the amp/period curve vs forward speed authority
+(not a stick floor). ``vx_engage`` remains FSM/teleop-only.
 """
 
 from __future__ import annotations
@@ -40,13 +43,23 @@ SPOT_STATIC_PHASE: Dict[str, float] = {
 }
 
 
+# SI stop bands for schedule (not stick deadzones).
+_VX_STOP_MPS = 0.010
+_YAW_STOP_RPS = 0.050
+# Geometry ↔ yaw: turn_cmd≈1 maps to roughly this wz (legacy cruise path).
+_TURN_CMD_WZ_REF = 0.40
+
+
 @dataclass(frozen=True)
 class VelocityCommand:
-    """Normalized drive intent (−1..1), same sense as UserCommand stick axes."""
+    """Body-frame locomotion command in SI units.
 
-    vx: float = 0.0  # +forward
-    yaw_rate: float = 0.0  # + = turn_cmd sense used by StableTrot (right turn >0)
-    vy: float = 0.0  # reserved (crab); unused by soft-trot schedule yet
+    Produced by teleop policy, autonomy, or sim CLI — never raw stick %.
+    """
+
+    vx: float = 0.0  # m/s, +forward
+    yaw_rate: float = 0.0  # rad/s, + = StableTrot right-turn sense
+    vy: float = 0.0  # m/s, reserved (crab)
 
 
 @dataclass(frozen=True)
@@ -270,32 +283,82 @@ class SoftTrotSchedule:
     def __init__(self, envelope: Optional[GaitEnvelope] = None):
         self.env = envelope or GaitEnvelope()
 
+    def max_forward_vx(self) -> float:
+        """Kinematic |vx| at full envelope authority (u=1)."""
+        return abs(self._vx_kin_at_u(1.0))
+
+    def vx_at_legacy_norm(self, norm: float) -> float:
+        """Map old stick-normalized cruise (0..1) → kinematic vx (m/s)."""
+        e = self.env
+        mag = max(0.0, min(1.0, abs(float(norm))))
+        if mag < e.vx_deadzone:
+            return 0.0
+        span = max(1e-6, 1.0 - e.vx_deadzone)
+        u = max(0.0, min(1.0, (mag - e.vx_deadzone) / span))
+        return abs(self._vx_kin_at_u(u))
+
+    def _speed_frac(self, u: float) -> float:
+        e = self.env
+        u = max(0.0, min(1.0, float(u)))
+        return e.throttle_min_scale + (1.0 - e.throttle_min_scale) * u
+
+    def _vx_kin_at_u(self, u: float) -> float:
+        from marsdog_control.control.velocity_model import VX_SCRUB_OFFSET_MPS
+
+        e = self.env
+        speed_frac = self._speed_frac(u)
+        period = e.period_max + (e.period_min - e.period_max) * max(0.0, min(1.0, u))
+        avg_amp = 0.5 * (e.amp_front_max + e.amp_rear_max) * speed_frac
+        return 2.0 * avg_amp / max(1e-3, period) + float(VX_SCRUB_OFFSET_MPS)
+
+    def _authority_for_vx(self, vx_mps: float) -> float:
+        """Invert envelope curve: desired |vx| → authority u∈[0,1]."""
+        target = abs(float(vx_mps))
+        vmax = self.max_forward_vx()
+        if target <= _VX_STOP_MPS or vmax <= _VX_STOP_MPS:
+            return 0.0
+        if target >= vmax:
+            return 1.0
+        lo, hi = 0.0, 1.0
+        for _ in range(24):
+            mid = 0.5 * (lo + hi)
+            if self._vx_kin_at_u(mid) < target:
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
     def map(self, cmd: VelocityCommand) -> GaitScheduleOutput:
         e = self.env
         vx = float(cmd.vx)
         yaw = float(cmd.yaw_rate)
-        mag = min(1.0, abs(vx))
-        yaw_mag = min(1.0, abs(yaw))
+        vy = float(cmd.vy)
 
-        # Abduction-led in-place spin when stick has yaw but no forward walk.
-        if mag < e.vx_deadzone and yaw_mag >= e.vx_deadzone:
+        if abs(vx) < _VX_STOP_MPS and abs(yaw) >= _YAW_STOP_RPS:
             return self._map_spot_turn(yaw)
 
-        # Stick authority is linear from deadzone → 1.0.
-        if mag < e.vx_deadzone:
+        if abs(vx) < _VX_STOP_MPS:
             u = 0.0
             speed_frac = 0.0
         else:
-            span = max(1e-6, 1.0 - e.vx_deadzone)
-            u = max(0.0, min(1.0, (mag - e.vx_deadzone) / span))
-            speed_frac = e.throttle_min_scale + (1.0 - e.throttle_min_scale) * u
+            u = self._authority_for_vx(vx)
+            speed_frac = self._speed_frac(u)
 
         sign = 1.0 if vx >= 0.0 else -1.0
         amp_f = sign * e.amp_front_max * speed_frac
         amp_r = sign * e.amp_rear_max * speed_frac
         if speed_frac > 1e-9:
-            step_f = max(e.step_h_front_floor, e.step_h_front_max * speed_frac)
-            step_r = max(e.step_h_rear_floor, e.step_h_rear_max * speed_frac)
+            # Lift ∝ speed_frac; anti-limp floor only above throttle_min_scale.
+            scuff_f = min(0.010, 0.45 * e.step_h_front_floor)
+            scuff_r = min(0.012, 0.45 * e.step_h_rear_floor)
+            tms = max(1e-6, e.throttle_min_scale)
+            floor_blend = max(
+                0.0, min(1.0, (speed_frac - tms) / max(1e-6, 1.0 - tms))
+            )
+            floor_f = scuff_f + (e.step_h_front_floor - scuff_f) * floor_blend
+            floor_r = scuff_r + (e.step_h_rear_floor - scuff_r) * floor_blend
+            step_f = max(floor_f, e.step_h_front_max * speed_frac)
+            step_r = max(floor_r, e.step_h_rear_max * speed_frac)
         else:
             step_f = 0.0
             step_r = 0.0
@@ -314,8 +377,10 @@ class SoftTrotSchedule:
             vx_si = vx_kin + sign * float(VX_SCRUB_OFFSET_MPS)
         else:
             vx_si = 0.0
-        turn_cmd = yaw * e.cruise_turn_scale
-        wz_si = turn_cmd * 0.4
+
+        wz_si = float(yaw)
+        turn_auth = max(-1.0, min(1.0, yaw / _TURN_CMD_WZ_REF))
+        turn_cmd = turn_auth * e.cruise_turn_scale
 
         return GaitScheduleOutput(
             amp_front=amp_f,
@@ -326,7 +391,7 @@ class SoftTrotSchedule:
             stance_ratio=float(stance),
             turn_cmd=float(turn_cmd),
             turn_y_gain=float(e.cruise_turn_yamp),
-            vel_cmd=(float(vx_si), float(cmd.vy), float(wz_si)),
+            vel_cmd=(float(vx_si), float(vy), float(wz_si)),
             speed_frac=float(speed_frac),
             turn_y_amp=float(e.cruise_turn_y_amp_m),
             turn_amp_diff=float(e.cruise_turn_amp_diff_m),
@@ -337,16 +402,16 @@ class SoftTrotSchedule:
             spot_com_shift=float(e.spot_com_shift_m),
         )
 
-    def _map_spot_turn(self, yaw: float) -> GaitScheduleOutput:
+    def _map_spot_turn(self, yaw_rate: float) -> GaitScheduleOutput:
         """In-place turn: diagonal trot, Raibert ω×r plant-hold."""
         e = self.env
-        yaw_mag = min(1.0, abs(yaw))
-        span = max(1e-6, 1.0 - e.vx_deadzone)
-        u = max(0.0, min(1.0, (yaw_mag - e.vx_deadzone) / span))
+        yaw_mag = abs(float(yaw_rate))
+        full = max(1e-6, float(e.spot_wz_scale))
+        u = max(0.0, min(1.0, yaw_mag / full))
         turn_frac = 0.55 + 0.45 * u
-        sign = 1.0 if yaw >= 0.0 else -1.0
+        sign = 1.0 if yaw_rate >= 0.0 else -1.0
         turn_cmd = sign * turn_frac * e.spot_turn_scale
-        wz_si = sign * turn_frac * e.spot_wz_scale
+        wz_si = sign * min(yaw_mag, full)
         return GaitScheduleOutput(
             amp_front=0.0,
             amp_rear=0.0,
@@ -379,16 +444,20 @@ class JumpScheduleOutput:
 
 
 class JumpSchedule:
-    """In-place hop intent — stick hold → trigger+rejump; release → idle.
+    """In-place hop intent — nonzero forward cmd → trigger+rejump; else idle.
 
-    Never enables spot turn; yaw stick ignored in v1.
+    Never enables spot turn; yaw ignored in v1. ``vx`` is SI m/s.
     """
 
-    def __init__(self, *, vx_deadzone: float = 0.12):
-        self.vx_deadzone = float(vx_deadzone)
+    def __init__(self, *, vx_engage_mps: float = 0.02, vx_deadzone: float | None = None):
+        # vx_deadzone kept as deprecated alias (old stick units misused as m/s gate).
+        if vx_deadzone is not None and vx_engage_mps == 0.02:
+            self.vx_engage_mps = float(vx_deadzone)
+        else:
+            self.vx_engage_mps = float(vx_engage_mps)
 
     def map(self, cmd: VelocityCommand) -> JumpScheduleOutput:
-        intent = abs(float(cmd.vx)) >= self.vx_deadzone
+        intent = abs(float(cmd.vx)) >= self.vx_engage_mps
         return JumpScheduleOutput(
             trigger=intent,
             auto_rejump=intent,
@@ -423,60 +492,30 @@ class WalkSchedule:
             amp_front=0.040, amp_rear=0.048, period=1.05, stance=0.74,
         )
 
+    def max_forward_vx(self) -> float:
+        return SoftTrotSchedule(self.env).max_forward_vx()
+
     def map(self, cmd: VelocityCommand) -> GaitScheduleOutput:
-        e = self.env
-        vx = float(cmd.vx)
-        mag = min(1.0, abs(vx))
-
-        if mag < e.vx_deadzone:
-            u = 0.0
-            speed_frac = 0.0
-        else:
-            span = max(1e-6, 1.0 - e.vx_deadzone)
-            u = max(0.0, min(1.0, (mag - e.vx_deadzone) / span))
-            speed_frac = e.throttle_min_scale + (1.0 - e.throttle_min_scale) * u
-
-        sign = 1.0 if vx >= 0.0 else -1.0
-        amp_f = sign * e.amp_front_max * speed_frac
-        amp_r = sign * e.amp_rear_max * speed_frac
-        if speed_frac > 1e-9:
-            step_f = max(e.step_h_front_floor, e.step_h_front_max * speed_frac)
-            step_r = max(e.step_h_rear_floor, e.step_h_rear_max * speed_frac)
-        else:
-            step_f = 0.0
-            step_r = 0.0
-
-        period = e.period_max + (e.period_min - e.period_max) * u
-        stance = e.stance_max + (e.stance_min - e.stance_max) * u
-        if speed_frac <= 1e-9:
-            period = e.period_nom
-            stance = e.stance_nom
-
-        from marsdog_control.control.velocity_model import VX_SCRUB_OFFSET_MPS
-
-        avg_amp = 0.5 * (abs(amp_f) + abs(amp_r))
-        if speed_frac > 0:
-            vx_kin = sign * (2.0 * avg_amp / max(1e-3, period))
-            vx_si = vx_kin + sign * float(VX_SCRUB_OFFSET_MPS)
-        else:
-            vx_si = 0.0
-
+        """Forward Walk — same SI inversion as SoftTrot; yaw ignored (v1)."""
+        soft = SoftTrotSchedule(self.env).map(
+            VelocityCommand(vx=float(cmd.vx), yaw_rate=0.0, vy=float(cmd.vy))
+        )
         return GaitScheduleOutput(
-            amp_front=amp_f,
-            amp_rear=amp_r,
-            step_height_front=float(step_f),
-            step_height=float(step_r),
-            period=float(period),
-            stance_ratio=float(stance),
+            amp_front=soft.amp_front,
+            amp_rear=soft.amp_rear,
+            step_height_front=soft.step_height_front,
+            step_height=soft.step_height,
+            period=soft.period,
+            stance_ratio=soft.stance_ratio,
             turn_cmd=0.0,
             turn_y_gain=0.0,
-            vel_cmd=(float(vx_si), float(cmd.vy), 0.0),
-            speed_frac=float(speed_frac),
+            vel_cmd=(soft.vel_cmd[0], soft.vel_cmd[1], 0.0),
+            speed_frac=soft.speed_frac,
             turn_y_amp=0.0,
             turn_amp_diff=0.0,
             spot_turn=False,
-            spot_y_hold_max=float(e.spot_y_hold_max_m),
-            spot_yaw_step=float(e.spot_yaw_step_rad),
+            spot_y_hold_max=soft.spot_y_hold_max,
+            spot_yaw_step=soft.spot_yaw_step,
             spot_dx_scale=0.0,
             spot_com_shift=0.0,
         )

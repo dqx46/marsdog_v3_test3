@@ -23,19 +23,23 @@ def _g(args: Any, name: str, default):
 
 @dataclass(frozen=True)
 class FsmDriveConfig:
-    """Everything the FSM needs each tick for stick drive / yaw-hold / throttle."""
+    """Everything the FSM needs each tick for stick drive / yaw-hold / throttle.
+
+    ``cruise_vx`` is SI m/s (teleop cruise when stick engages). Stick −1..1
+    mapping lives in ``input.teleop_policy``; schedules eat SI only.
+    """
 
     gp_trot_threshold: float = 0.15
     gp_deadzone: float = 0.12
     throttle_min_scale: float = 0.5
-    # Stick is on/off only: once |vx| > engage, schedule uses this fixed cruise
-    # (matches sim default ``--vx 0.5``). Stick depth does not scale amp/period.
-    cruise_vx: float = 0.5
+    # Teleop cruise speed [m/s] after stick engage (sim ``--vx``). Not stick %.
+    cruise_vx: float = 0.100
+    yaw_rate_max: float = 0.40  # rad/s at |stick_yaw|=1
     yaw_hold: bool = False
     yaw_hold_kp: float = 0.0
     yaw_hold_kd: float = 0.0
     yaw_hold_sign: float = 1.0
-    yaw_hold_limit: float = 0.5
+    yaw_hold_limit: float = 0.5  # stick-scale clamp for yaw-hold output
     cruise_turn_scale: float = 0.6
     cruise_turn_yamp: float = 1.0
     amp_front: float = 0.026
@@ -51,6 +55,10 @@ class FsmDriveConfig:
         gp_trot_threshold: Optional[float] = None,
         gp_deadzone: Optional[float] = None,
     ) -> "FsmDriveConfig":
+        from marsdog_control.input.teleop_policy import (
+            DEFAULT_CRUISE_VX_MPS,
+            DEFAULT_YAW_RATE_MAX,
+        )
         return cls(
             gp_trot_threshold=(
                 0.15 if gp_trot_threshold is None
@@ -59,7 +67,8 @@ class FsmDriveConfig:
                 0.12 if gp_deadzone is None else float(gp_deadzone)),
             throttle_min_scale=float(_g(
                 args, "throttle_min_scale", GAIT.throttle_min_scale)),
-            cruise_vx=float(_g(args, "cruise_vx", 0.5)),
+            cruise_vx=float(_g(args, "cruise_vx", DEFAULT_CRUISE_VX_MPS)),
+            yaw_rate_max=float(_g(args, "yaw_rate_max", DEFAULT_YAW_RATE_MAX)),
             yaw_hold=bool(_g(args, "yaw_hold", False)),
             yaw_hold_kp=float(_g(args, "yaw_hold_kp", 0.0)),
             yaw_hold_kd=float(_g(args, "yaw_hold_kd", 0.0)),

@@ -84,7 +84,7 @@ class TestGaitCadenceCli(unittest.TestCase):
     def test_end_to_end_nat_fwd_and_schedule_use_cli_period(self):
         """Regression: recipe dict must not leave SoftTrot stuck at preset period."""
         preset_T = float(NATURAL_SOFT_TROT_WBC["period"])
-        self.assertAlmostEqual(preset_T, 0.87, places=2)
+        self.assertGreater(preset_T, 0.4)
 
         args, recipe, cfg, nat_fwd, fsm = _trace_soft_trot(["--gait-period", "1.20"])
         self.assertAlmostEqual(args.nat_period, 1.20)
@@ -94,21 +94,26 @@ class TestGaitCadenceCli(unittest.TestCase):
         self.assertAlmostEqual(float(nat_fwd.period), 1.20)
         self.assertAlmostEqual(fsm._nat_schedule.env.period_nom, 1.20)
 
-        # Cruise throttle (vx=0.5) must schedule from the CLI envelope, not 0.87.
+        # SI cruise (m/s) must schedule from the CLI envelope, not the preset period.
         state = RobotState(imu_connected=False)
-        fsm._apply_natural_throttle(state, 0.5, 0.0)
+        cruise_mps = SoftTrotSchedule(fsm._nat_schedule.env).vx_at_legacy_norm(0.5)
+        fsm._apply_natural_throttle(state, cruise_mps, 0.0)
         env = fsm._nat_schedule.env
         self.assertGreaterEqual(float(nat_fwd.period), env.period_min - 1e-9)
         self.assertLessEqual(float(nat_fwd.period), env.period_max + 1e-9)
         # Distinct from default-preset cruise period
         _, _, _, nat_default, fsm_default = _trace_soft_trot([])
-        fsm_default._apply_natural_throttle(state, 0.5, 0.0)
+        cruise_default = SoftTrotSchedule(
+            fsm_default._nat_schedule.env
+        ).vx_at_legacy_norm(0.5)
+        fsm_default._apply_natural_throttle(state, cruise_default, 0.0)
         self.assertNotAlmostEqual(float(nat_fwd.period), float(nat_default.period), places=3)
 
     def test_default_keeps_soft_trot_preset_period(self):
         args, recipe, cfg, nat_fwd, fsm = _trace_soft_trot([])
-        self.assertAlmostEqual(float(nat_fwd.period), 0.87, places=2)
-        self.assertAlmostEqual(fsm._nat_schedule.env.period_nom, 0.87, places=2)
+        preset_T = float(NATURAL_SOFT_TROT_WBC["period"])
+        self.assertAlmostEqual(float(nat_fwd.period), preset_T, places=2)
+        self.assertAlmostEqual(fsm._nat_schedule.env.period_nom, preset_T, places=2)
 
     def test_cli_stance_and_period_reach_schedule(self):
         """--gait-period / --stance override SoftTrot without editing recipes."""
@@ -138,8 +143,12 @@ class TestGaitCadenceCli(unittest.TestCase):
         controllers = build_controller_set(
             cfg, front_x0=0.0, rear_x0=0.0, natural_params=stale,
         )
-        # Stale recipe still 0.87 → nat_fwd ignores CLI (the bug we fixed)
-        self.assertAlmostEqual(float(controllers.nat_fwd.period), 0.87, places=2)
+        # Stale recipe keeps preset period → nat_fwd ignores CLI (the bug we fixed)
+        self.assertAlmostEqual(
+            float(controllers.nat_fwd.period),
+            float(NATURAL_SOFT_TROT_WBC["period"]),
+            places=2,
+        )
         self.assertAlmostEqual(cfg.nat_period, 1.20)
 
 

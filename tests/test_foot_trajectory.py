@@ -81,6 +81,23 @@ class AntiRollAndLateralTest(unittest.TestCase):
         self.assertAlmostEqual(ft.lateral_offset_trot(0.0, period, sr, sway), 0.0)
         self.assertAlmostEqual(ft.lateral_offset_trot(sr, period, sr, sway), 0.0, places=6)
 
+    def test_soft_trot_com_holds_amplitude_mid_diagonal(self):
+        """Event-type CoM stays loaded mid-stance (unlike half-sine → 0 at TD)."""
+        period, sway = 1.0, 0.012
+        # Mid FL+RR half → full −Y (sim-validated anti-roll polarity)
+        self.assertAlmostEqual(
+            ft.lateral_offset_soft_trot_com(0.25, period, sway), -sway)
+        # Mid FR+RL half → full +Y
+        self.assertAlmostEqual(
+            ft.lateral_offset_soft_trot_com(0.75, period, sway), sway)
+        # Near diagonal switch: magnitude below full (blend zone)
+        mid = ft.lateral_offset_soft_trot_com(0.50, period, sway, blend=0.12)
+        self.assertAlmostEqual(mid, 0.0, places=5)
+
+    def test_trot_weight_shift_sign_plateaus(self):
+        self.assertEqual(ft.trot_weight_shift_sign(0.2, blend=0.10), -1.0)
+        self.assertEqual(ft.trot_weight_shift_sign(0.7, blend=0.10), 1.0)
+
     def test_lateral_offset_pace_is_full_period_cosine(self):
         period, sr, sway = 1.0, 0.6, 0.01
         # phase == stance_ratio/2 -> cos(0) == 1 -> full amplitude.

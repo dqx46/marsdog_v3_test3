@@ -17,5 +17,8 @@ if [ -x "${HOME}/miniforge3/envs/marsdog/bin/python" ]; then
   PY="${HOME}/miniforge3/envs/marsdog/bin/python"
 elif [ -x "/home/cat/miniforge3/envs/marsdog/bin/python" ]; then
   PY="/home/cat/miniforge3/envs/marsdog/bin/python"
+elif [ -x "${HOME}/miniforge3/envs/gmr/bin/python" ]; then
+  # 本机无 marsdog env 时用 gmr（含 pinocchio）
+  PY="${HOME}/miniforge3/envs/gmr/bin/python"
 fi
 exec "$PY" -m marsdog_control.apps.walk "$@"
