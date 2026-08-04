@@ -20,8 +20,10 @@
   6. 被动监听 IMU 数据帧
   7. 检查 PS2 手柄接收器和喇叭设备路径
   8. 汇总在线电机及外设状态
+  9. 固定 2D 俯视示意图标红离线电机 (可用 --no-plot 关闭)
 """
 
+import argparse
 import os
 import time
 import struct
@@ -38,6 +40,10 @@ from marsdog_control.config.joints import (
     JOINT_BY_ID, LZ_CAN_A_IDS, LZ_CAN_B_IDS,
     EVO_CAN_IDS, DM_CAN_IDS, INCOS_CAN_IDS,
     DM_MASTER_ID_BY_SLAVE,
+)
+from marsdog_control.apps.tools.diagnostics.motor_status_viz import (
+    default_plot_path,
+    render_motor_status_figure,
 )
 
 # ── 常量 ──────────────────────────────────────────────────────────
@@ -215,7 +221,23 @@ def probe_evo(serial, motor_id):
 
 # ── 主测试 ────────────────────────────────────────────────────────
 
-def main():
+def _parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description="Marsdog 五总线 + IMU 静态通信测试（不使能电机）")
+    p.add_argument(
+        "--no-plot", action="store_true",
+        help="不生成电机状态 2D 示意图")
+    p.add_argument(
+        "--show", action="store_true",
+        help="出图后尝试弹出窗口（无显示环境则仅保存）")
+    p.add_argument(
+        "--plot-path", default=None,
+        help="示意图 PNG 路径（默认仓库根 static_test_status.png）")
+    return p.parse_args(argv)
+
+
+def main(argv=None):
+    args = _parse_args(argv)
     print("=" * 70)
     print("  Marsdog 五总线 + IMU 静态通信测试")
     print("  ※ 不使能电机、不发运动指令")
@@ -420,6 +442,16 @@ def main():
             print(f"  ✗ IMU 离线: {imu_msg}")
     print()
 
+    if not args.no_plot:
+        out = args.plot_path or default_plot_path()
+        path = render_motor_status_figure(
+            results, out_path=out, show=args.show)
+        if path:
+            print(f"  电机状态示意图: {path}")
+            if offline_ids := [mid for mid, v in results.items() if not v[0]]:
+                print(f"  (红点 = 离线: {offline_ids})")
+            print()
+
     # cleanup
     can_a.end()
     can_incos.end()
@@ -429,4 +461,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main() or 0)
