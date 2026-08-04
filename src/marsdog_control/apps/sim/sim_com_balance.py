@@ -681,7 +681,7 @@ def _run_real(tool, ctx) -> int:
             f"reason={abort_reason or 'ok'}  "
             f"(record this com_x/y if still balanced)"
         )
-        svc.shutdown_motors(lz, evo, dm, incos)
+        # svc.shutdown_motors(lz, evo, dm, incos)
         print("[CoMBal] motors shut down")
     return 0 if abort_reason in ("", "quit key", "duration", "ok") else 1
 
