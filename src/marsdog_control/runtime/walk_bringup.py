@@ -7,6 +7,7 @@ app shell can stay CLI + assembly.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Sequence
@@ -28,6 +29,107 @@ class HardwareSession:
     board: Optional[MotorBoard]
     online: list
     dm_fixed_targets: dict = field(default_factory=dict)
+    # Hot-start continuous hold; caller stops it when pose-hold / fade takes over.
+    hot_hold: Any = None
+
+
+def _joint_hold_gains(joint_map: Sequence) -> dict:
+    """motor_id → (kp, kd, trq_ff) from real JOINT_GAINS (+ brand scale)."""
+    from marsdog_control.config.gains import BRAND_GAIN_SCALE, JOINT_GAINS
+    out = {}
+    for j in joint_map:
+        g = JOINT_GAINS.get(j.name, {})
+        sc = BRAND_GAIN_SCALE.get(j.mtype, {"kp": 1.0, "kd": 1.0})
+        out[j.motor_id] = (
+            float(g.get("kp", 50.0)) * float(sc.get("kp", 1.0)),
+            float(g.get("kd", 3.0)) * float(sc.get("kd", 1.0)),
+            float(g.get("trq_ff", 0.0)),
+        )
+    return out
+
+
+class _HotStartHold:
+    """~200Hz hold across bring-up so opening bus N does not drop bus N-1."""
+
+    def __init__(self, joint_map: Sequence):
+        self._gains = _joint_hold_gains(joint_map)
+        self._joint_map = list(joint_map)
+        self._lz = None
+        self._evo = None
+        self._incos = None
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+
+    def bind(self, *, lz=None, evo=None, incos=None) -> None:
+        with self._lock:
+            if lz is not None:
+                self._lz = lz
+            if evo is not None:
+                self._evo = evo
+            if incos is not None:
+                self._incos = incos
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._loop, name="hot-start-hold", daemon=True)
+        self._thread.start()
+        print("[init] hot-start 连续保位线程 ON（整段 bringup 不掉使能）")
+
+    def stop(self) -> None:
+        self._stop.set()
+        th = self._thread
+        self._thread = None
+        if th is not None and th.is_alive():
+            th.join(timeout=1.0)
+
+    def kick(self) -> None:
+        self._tick()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(0.005):
+            try:
+                self._tick()
+            except Exception:
+                pass
+
+    def _tick(self) -> None:
+        with self._lock:
+            lz, evo, incos = self._lz, self._evo, self._incos
+        if lz is not None:
+            try:
+                lz.hold_connected(self._gains)
+            except Exception:
+                pass
+        if evo is not None:
+            for j in self._joint_map:
+                if j.mtype != "evo":
+                    continue
+                idx = j.motor_id - 1
+                if not evo.is_connected[idx]:
+                    continue
+                kp, kd, tau = self._gains.get(j.motor_id, (30.0, 4.0, 0.0))
+                try:
+                    q = evo.get_position(j.motor_id)
+                    evo.ptm_control(j.motor_id, float(q), 0.0, kp, kd, tau)
+                except Exception:
+                    pass
+        if incos is not None:
+            for j in self._joint_map:
+                if j.mtype != "incos":
+                    continue
+                idx = j.motor_id - 1
+                if not incos.is_connected[idx]:
+                    continue
+                kp, kd, tau = self._gains.get(j.motor_id, (55.0, 3.2, 0.0))
+                try:
+                    q = incos.get_position(j.motor_id)
+                    incos.mit_control(j.motor_id, float(q), 0.0, kp, kd, tau)
+                except Exception:
+                    pass
 
 
 def bringup_imu(
@@ -94,8 +196,13 @@ def bringup_motors_and_board(
     all_ids: Sequence[int],
     shutdown_motors: Callable,
     clock=time,
+    clear_fault: bool = False,
 ) -> Optional[HardwareSession]:
     """Open buses, enable motors, wrap them in ``RkMotorBoard``.
+
+    ``clear_fault=False`` (walk default): skip LZ disable/REST probe so a
+    hot-held stand does not collapse before fade-to-stand.
+    ``clear_fault=True``: old cold-start path (disable+clear then enable).
 
     Returns ``None`` when no motors are online (after attempting shutdown).
     """
@@ -103,13 +210,36 @@ def bringup_motors_and_board(
     evo = motor_evo_cls()
     incos = None
     dm_fixed_targets: dict = {}
+    holder: Optional[_HotStartHold] = None
+    if not clear_fault:
+        holder = _HotStartHold(joint_map)
+
+    if clear_fault:
+        print("[init] clear_fault ON（启动先失能清障）")
+    else:
+        print("[init] clear_fault OFF（保持使能热启，直接 fade 起立）")
 
     print(f"[init] 1/5 灵足 Serial ({lz_serial_device})...")
-    lz.init_serial(lz_serial_device, baud)
+    lz.init_serial(lz_serial_device, baud, clear_fault=clear_fault)
+    if holder is not None:
+        holder.bind(lz=lz)
+        holder.start()
+        holder.kick()
+
     print(f"[init] 2/5 灵足 CAN1   ({lz_can1_device})...")
-    lz.init_can1_serial(lz_can1_device, baud)
+    lz.init_can1_serial(lz_can1_device, baud, clear_fault=clear_fault)
+    if holder is not None:
+        holder.kick()
+
     print(f"[init] 3/5 泉智博 CAN0 ({evo_can0_device})...")
-    evo.init_serial(evo_can0_device, baud)
+    evo.init_serial(evo_can0_device, baud, clear_fault=clear_fault)
+    if holder is not None:
+        # Always mark want_motor + MOTOR_STATE so keepalive never sprays REST.
+        for j in joint_map:
+            if j.mtype == "evo" and evo.is_connected[j.motor_id - 1]:
+                evo.enter_motor_state(j.motor_id)
+        holder.bind(evo=evo)
+        holder.kick()
 
     print(f"[init] 4/5 因克斯 CAN   ({incos_can_device})...")
     incos = motor_incos_cls()
@@ -121,11 +251,15 @@ def bringup_motors_and_board(
             print(f"  [WARNING] {incos_can_device} 打开失败, "
                   f"因克斯小腿本次不可用")
             incos = None
+    if holder is not None and incos is not None:
+        holder.bind(incos=incos)
+        holder.kick()
 
     print(f"[init] 5/5 达妙 u2can  ({dm_can_device})...")
     dm = motor_damiao_cls()
     if dm.begin(dm_can_device, baud):
-        clock.sleep(1.5)
+        # Hot-start: skip long settle so held stand does not sag while probing.
+        clock.sleep(1.5 if clear_fault else 0.05)
         for j in dm_joints:
             dm.add_motor(j.motor_id, master_id=dm_master_id_by_slave.get(j.motor_id))
         for j in dm_joints:
@@ -141,26 +275,30 @@ def bringup_motors_and_board(
         print(f"  [WARNING] {dm_can_device} 打开失败, 达妙 tarsus 本次不可用")
         dm = None
 
-    for j in joint_map:
-        if j.mtype == "lz" and lz.is_connected[j.motor_id - 1]:
-            lz.enable(j.motor_id)
-            clock.sleep(0.002)
-    clock.sleep(0.05)
-
-    for _attempt in range(5):
-        not_enabled = []
+    if clear_fault:
         for j in joint_map:
-            if j.mtype == "evo" and evo.is_connected[j.motor_id - 1]:
-                idx = j.motor_id - 1
-                if evo.status[idx] != 0x02:
-                    not_enabled.append(j)
-                    evo.enter_motor_state(j.motor_id)
-                    clock.sleep(0.005)
-        if not not_enabled:
-            break
+            if j.mtype == "lz" and lz.is_connected[j.motor_id - 1]:
+                lz.enable(j.motor_id)
+                clock.sleep(0.002)
         clock.sleep(0.05)
+        for _attempt in range(5):
+            not_enabled = []
+            for j in joint_map:
+                if j.mtype == "evo" and evo.is_connected[j.motor_id - 1]:
+                    idx = j.motor_id - 1
+                    if evo.status[idx] != 0x02:
+                        not_enabled.append(j)
+                        evo.enter_motor_state(j.motor_id)
+                        clock.sleep(0.005)
+            if not not_enabled:
+                break
+            clock.sleep(0.05)
+        clock.sleep(0.4)
+    else:
+        # Hot-start: never re-enable (would clear MIT hold); holder already running.
+        print("[init] skip re-enable / settle（由保位线程维持刚度）")
+        clock.sleep(0.02)
 
-    clock.sleep(0.4)
     board = board_cls.from_existing(
         lz, evo, dm, incos, dm_fixed_targets=dm_fixed_targets)
     online = sorted(board.online_ids())
@@ -170,6 +308,8 @@ def bringup_motors_and_board(
 
     if not online:
         print("[ERROR] 无在线电机")
+        if holder is not None:
+            holder.stop()
         shutdown_motors(lz, evo, dm, incos)
         return None
 
@@ -179,22 +319,62 @@ def bringup_motors_and_board(
     print(fault.describe(joint_by_id))
     if not fault.ok_to_stand:
         print("[ABORT] 拒绝进入站立/步态 —— 承重电机缺失, 站立会直接摔倒")
+        if holder is not None:
+            holder.stop()
         shutdown_motors(lz, evo, dm, incos)
         return None
 
     print(f"\n[online] {len(online)}/{len(all_ids)} 电机在线\n")
+    if holder is not None:
+        holder.kick()
+        _seed_hot_start_hold(lz, evo, dm, incos, board)
+        # Keep thread running until walk.py start_pose_hold takes over.
     return HardwareSession(
         lz=lz, evo=evo, dm=dm, incos=incos,
         imu=None, imu_ok=False,
         board=board, online=online,
         dm_fixed_targets=dm_fixed_targets,
+        hot_hold=holder,
     )
+
+
+def _seed_hot_start_hold(lz, evo, dm, incos, board) -> None:
+    """One full-gain hold burst right after buses open (before app assemble)."""
+    from marsdog_control.config.gains import BRAND_GAIN_SCALE, JOINT_GAINS
+    from marsdog_control.config.joints import JOINT_BY_ID
+    try:
+        cur = board.get_angles(include_dm=True)
+    except Exception:
+        return
+    for mid, q in cur.items():
+        j = JOINT_BY_ID.get(mid)
+        if j is None:
+            continue
+        g = JOINT_GAINS.get(j.name, {})
+        sc = BRAND_GAIN_SCALE.get(j.mtype, {"kp": 1.0, "kd": 1.0})
+        kp = float(g.get("kp", 50.0)) * float(sc.get("kp", 1.0))
+        kd = float(g.get("kd", 3.0)) * float(sc.get("kd", 1.0))
+        tau = float(g.get("trq_ff", 0.0))
+        try:
+            if j.mtype == "lz" and lz is not None:
+                lz.mit_control(mid, float(q), 0.0, kp, kd, tau)
+            elif j.mtype == "evo" and evo is not None:
+                evo.ptm_control(mid, float(q), 0.0, kp, kd, tau)
+            elif j.mtype == "incos" and incos is not None:
+                incos.mit_control(mid, float(q), 0.0, kp, kd, tau)
+            elif j.mtype == "dm" and dm is not None:
+                # Keep probed pose; worker already has enable.
+                pass
+        except Exception:
+            pass
+    print("[init] hot-start 保位已刷一帧（全刚度）")
 
 
 @dataclass
 class StandReadyResult:
     ok: bool
     stand_pos: dict = field(default_factory=dict)
+    stand_motor: dict = field(default_factory=dict)
     direction_test_base: Optional[dict] = None
 
 
@@ -211,8 +391,18 @@ def fade_to_stand(
     joint_direction_test: bool = False,
     hip_abd_test: bool = False,
     leg_pitch_test: bool = False,
+    kp_start: float = 1.0,
+    kp_end: float = 1.0,
+    stop_pose_hold: Optional[Callable] = None,
 ) -> StandReadyResult:
-    """Fade into the stand pose and optionally build a direction-test base."""
+    """Fade into the stand pose and optionally build a direction-test base.
+
+    Default ``kp_start=1.0`` keeps full stiffness while interpolating pose
+    (hot-start must not dip to soft kp). Cold-start may pass ``kp_start=0.3``.
+
+    Pose-hold (if any) is stopped only after the first fade frame is sent, so
+    there is no MIT gap at fade start.
+    """
     # stand.get_targets() 是纯 URDF 空间; cur_pos 来自 board.get_angles() 是电机空间。
     # smooth_transition / recover 直连 send_all(电机空间), 因此这里必须先把站姿目标
     # 经唯一真源映射 urdf_pose_to_motor 转到电机空间(等价于主控 backend.send 的 j.sign),
@@ -220,12 +410,22 @@ def fade_to_stand(
     from marsdog_control.backends.real import urdf_pose_to_motor
     stand_pos = stand.get_targets(0)                # URDF 空间(供 direction_test_base / 返回给主循环)
     stand_motor = urdf_pose_to_motor(stand_pos)     # 电机空间(供 fade/recover 实际下发)
-    print(f"[fade] 过渡到正常站姿 ({fade_s:.1f}s)...")
+    print(
+        f"[fade] 过渡到正常站姿 ({fade_s:.1f}s, "
+        f"kp {kp_start:.2f}→{kp_end:.2f})..."
+    )
+    # Overlap: first fade frame sends, then stop pose-hold (no MIT gap).
     ok = smooth_transition(
-        lz, evo, dm, incos, cur_pos, stand_motor, fade_s, label="stand")
+        lz, evo, dm, incos, cur_pos, stand_motor, fade_s, label="stand",
+        kp_start=float(kp_start), kp_end=float(kp_end),
+        on_first_send=stop_pose_hold)
     if not ok:
+        if stop_pose_hold is not None:
+            stop_pose_hold()
         shutdown_motors(lz, evo, dm, incos)
         return StandReadyResult(ok=False)
+    if stop_pose_hold is not None:
+        stop_pose_hold()
     if not recover_lz_stand_faults(lz, evo, dm, incos, online, stand_motor):
         shutdown_motors(lz, evo, dm, incos)
         return StandReadyResult(ok=False)
@@ -245,7 +445,8 @@ def fade_to_stand(
         print(f"[direction-test] 已在正常站姿；{test_desc}将在 {fade_s:.1f}s 内由主控制"
               "管线缓慢运动。观察确认后按 q 回正常站姿并失能。\n")
     return StandReadyResult(
-        ok=True, stand_pos=stand_pos, direction_test_base=direction_test_base)
+        ok=True, stand_pos=stand_pos, stand_motor=stand_motor,
+        direction_test_base=direction_test_base)
 
 
 def calibrate_imu_after_stand(

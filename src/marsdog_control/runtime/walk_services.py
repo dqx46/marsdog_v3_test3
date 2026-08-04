@@ -12,8 +12,9 @@ module delegators have been removed.
 from __future__ import annotations
 
 import math
+import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from marsdog_control.config.joints import (
@@ -54,6 +55,8 @@ class WalkServices:
     board: Optional[object] = None
     stop: bool = False
     clock: object = time
+    _hold_stop: Optional[threading.Event] = field(default=None, init=False, repr=False)
+    _hold_thread: Optional[threading.Thread] = field(default=None, init=False, repr=False)
 
     @property
     def dm_fixed_targets(self) -> dict:
@@ -134,7 +137,8 @@ class WalkServices:
             low_torque_nm=low_torque_nm)
 
     def smooth_transition(self, lz, evo, dm, incos, from_pos, to_pos, duration,
-                          label="fade", *, kp_start: float = 0.3, kp_end: float = 1.0):
+                          label="fade", *, kp_start: float = 0.3, kp_end: float = 1.0,
+                          on_first_send=None):
         def _send(lz_arg, evo_arg, dm_arg, incos_arg, cur, kp_s):
             self.send_all(lz_arg, evo_arg, dm_arg, incos_arg, cur,
                           use_joint_gains=True, kp_scale=kp_s)
@@ -143,23 +147,64 @@ class WalkServices:
             lz, evo, dm, incos, from_pos, to_pos, duration, label=label,
             send_fn=_send, control_hz=self.control_hz,
             stop_check=lambda: self.stop, clock=self.clock,
-            kp_start=kp_start, kp_end=kp_end)
+            kp_start=kp_start, kp_end=kp_end,
+            on_first_send=on_first_send)
 
-    def shutdown_motors(self, lz, evo, dm=None, incos=None):
+    def start_pose_hold(self, lz, evo, dm, incos, targets: dict) -> None:
+        """Hold ``targets`` at full joint gains until ``stop_pose_hold``.
+
+        Bridges the bring-up → fade gap so hot-start does not go soft while
+        logging / stack assembly run.
+        """
+        self.stop_pose_hold()
+        hold = dict(targets)
+        stop = threading.Event()
+        hz = max(50.0, float(self.control_hz))
+
+        def _loop():
+            dt = 1.0 / hz
+            while not stop.is_set():
+                try:
+                    self.send_all(
+                        lz, evo, dm, incos, hold,
+                        use_joint_gains=True, kp_scale=1.0)
+                except Exception:
+                    pass
+                stop.wait(dt)
+
+        self._hold_stop = stop
+        self._hold_thread = threading.Thread(
+            target=_loop, name="walk-pose-hold", daemon=True)
+        self._hold_thread.start()
+        print(f"[hold] 保位已启动 ({len(hold)} 轴, 全刚度) — fade 前不软掉")
+
+    def stop_pose_hold(self) -> None:
+        stop = self._hold_stop
+        th = self._hold_thread
+        self._hold_stop = None
+        self._hold_thread = None
+        if stop is not None:
+            stop.set()
+        if th is not None and th.is_alive():
+            th.join(timeout=1.0)
+
+    def shutdown_motors(self, lz, evo, dm=None, incos=None, *, disable=True):
         """Close motor drivers in bus-owner order.
 
         Incos shares LZ CAN-A, so it must release before ``lz.end()`` closes the
-        shared serial adapter.
+        shared serial adapter. ``disable=False`` only closes host IO and leaves
+        motors holding their last command (debug hot-reload).
         """
+        self.stop_pose_hold()
         if self.board is not None:
-            self.board.close()
+            self.board.close(disable=disable)
             self.board = None
             self.runtime_state.board = None
             return
         if incos is not None:
-            incos.end()
-        lz.end()
-        evo.end()
+            incos.end(disable=disable)
+        lz.end(disable=disable)
+        evo.end(disable=disable)
         if dm is not None:
             dm.end()
 

@@ -160,6 +160,7 @@ def smooth_transition(
     clock=None,
     kp_start: float = 0.3,
     kp_end: float = 1.0,
+    on_first_send: Optional[Callable[[], None]] = None,
 ):
     """按 smoothstep 在 duration 内从 from_pos 插值到 to_pos，每步调用 send_fn。
 
@@ -167,12 +168,15 @@ def smooth_transition(
 
     ``kp_start``/``kp_end``: 刚度随进度线性变化。坐下/趴下应让 ``kp_end``
     与 hold 入口软刚度对齐，避免过渡最后一帧全增益猛冲。
+
+    ``on_first_send``: 首帧 send 之后回调一次（用于 pose-hold → fade 无缝交接）。
     """
     clock = clock or time
     steps = max(1, int(duration * control_hz))
     kp0 = float(kp_start)
     kp1 = float(kp_end)
     t0 = clock.monotonic()
+    first = True
     for step in range(steps + 1):
         if stop_check is not None and stop_check():
             return False
@@ -187,6 +191,13 @@ def smooth_transition(
         # 注意: from_pos/to_pos 都不含达妙 tarsus id 时, cur 也不会有,
         # send_all 内部会自动回退用 DM_FIXED_TARGETS 保持固定角度不动。
         send_fn(lz, evo, dm, incos, cur, kp_s)
+        if first:
+            first = False
+            if on_first_send is not None:
+                try:
+                    on_first_send()
+                except Exception:
+                    pass
         pct = int(alpha * 100)
         sys.stdout.write(f"\r  [{label}] {pct:3d}%  step {step}/{steps}   ")
         sys.stdout.flush()

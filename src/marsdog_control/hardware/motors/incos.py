@@ -5,10 +5,13 @@ USB-CAN serial framing as the other serial CAN adapters in this project.
 All public position/speed units are radians and radians/second.
 """
 
+from __future__ import annotations
+
 import math
 import struct
 import threading
 import time
+from typing import Optional
 
 from marsdog_control.hardware.motors.can_serial import CAN_EFF_FLAG, CanSerial
 
@@ -26,6 +29,14 @@ TORQUE_COEFF = 1.35
 QUERY_POSITION = 1
 QUERY_SPEED = 2
 QUERY_CURRENT = 3
+# ENCOS §9.3 query code 31: CAN timeout (ms)
+QUERY_CAN_TIMEOUT = 31
+# ENCOS §9.2.10 config code 0x0b: CAN timeout (ms); 0 = keep last command
+CFG_CAN_TIMEOUT = 0x0B
+DEFAULT_CAN_TIMEOUT_MS = 500
+# Modest MIT hold if last cmd missing when parking enabled
+_HOLD_KP = 40.0
+_HOLD_KD = 2.0
 
 
 def _clamp(x, lo, hi):
@@ -109,6 +120,13 @@ class MotorIncos:
             else:
                 print(f"[Incos] motor {mid} init failed (no query reply)")
 
+        # Seed MIT hold so keepalive bridges the bring-up gap (esp. DM probe).
+        for mid in self._active_ids:
+            if self.is_connected[mid - 1]:
+                q = self.get_position(mid)
+                self.mit_control(mid, q, 0.0, _HOLD_KP, _HOLD_KD, 0.0)
+                time.sleep(0.002)
+
         self._running = True
         self._thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
@@ -185,18 +203,211 @@ class MotorIncos:
         with self._cmd_lock:
             self._last_cmd[motor_id] = (pos_rad, vel_rad, kp, kd, torque_ff)
 
-    def end(self):
-        self._running = False
-        self.stop_keepalive()
-        if self._thread:
-            self._thread.join(timeout=1.0)
-            self._thread = None
-        # Hold current position with zero gains before closing the bus.
-        for mid in self._active_ids:
-            if self.is_connected[mid - 1]:
-                self.mit_control(mid, self.get_position(mid), 0.0, 0.0, 0.0, 0.0)
-                self.is_enabled[mid - 1] = False
-                time.sleep(0.002)
+    @staticmethod
+    def encode_can_timeout_frame(timeout_ms: int) -> bytes:
+        """ENCOS V1.19 §9.2.10: config CAN timeout (ms); 0 disables timeout.
+
+        Example (manual): ``C00B01F4`` → 500ms.
+        """
+        ms = max(0, min(0xFFFF, int(timeout_ms)))
+        # mode=0x06 in top 3 bits, reserved=0 → 0xC0; code=0x0b; uint16 BE
+        return bytes([0xC0, CFG_CAN_TIMEOUT, (ms >> 8) & 0xFF, ms & 0xFF])
+
+    def _drain_rx(self, window_s: float = 0.02) -> None:
+        deadline = time.monotonic() + max(0.0, float(window_s))
+        while time.monotonic() < deadline:
+            with self._lock:
+                msg = self._serial.read_msg()
+            if not msg:
+                time.sleep(0.001)
+                continue
+            self._handle_msg(msg)
+
+    def _wait_config_or_query(
+        self,
+        motor_id: int,
+        *,
+        want_timeout_ms: Optional[int] = None,
+        timeout_s: float = 0.15,
+    ) -> tuple[bool, Optional[int]]:
+        """Wait for config ACK (§10 type4 / 0xFF 0xFE) or query-31 reply.
+
+        Returns ``(ok, reported_timeout_ms)``.
+        """
+        deadline = time.monotonic() + max(0.05, float(timeout_s))
+        reported = None
+        got_cfg_ok = False
+        while time.monotonic() < deadline:
+            with self._lock:
+                msg = self._serial.read_msg()
+            if not msg:
+                time.sleep(0.001)
+                continue
+            can_id, dlc, data = msg
+            if can_id & CAN_EFF_FLAG:
+                continue
+            mid = can_id & 0x7FF
+            if mid != motor_id or dlc < 2:
+                # Keep other motors' MIT feedback parsed.
+                self._handle_msg(msg)
+                continue
+            frame_type = data[0] >> 5
+            # §9.2.x config reply: FF FE 0B <uint16>
+            if dlc >= 5 and data[0] == 0xFF and data[1] == 0xFE and data[2] == CFG_CAN_TIMEOUT:
+                reported = (data[3] << 8) | data[4]
+                got_cfg_ok = True
+                if want_timeout_ms is None or reported == int(want_timeout_ms):
+                    return True, reported
+            # §10 type4 config: Byte1=code, Byte2=0 fail / 1 ok (some FW)
+            if frame_type == 4 and dlc >= 3 and data[1] == CFG_CAN_TIMEOUT:
+                if data[2] == 1:
+                    got_cfg_ok = True
+                    if want_timeout_ms is None:
+                        return True, reported
+                elif data[2] == 0:
+                    return False, reported
+            # §10 type5 query: Byte1=31, Byte2-3=uint16 ms
+            if frame_type == 5 and dlc >= 4 and data[1] == QUERY_CAN_TIMEOUT:
+                reported = (data[2] << 8) | data[3]
+                if want_timeout_ms is None or reported == int(want_timeout_ms):
+                    return True, reported
+            self._handle_msg(msg)
+        return got_cfg_ok, reported
+
+    def set_can_timeout_ms(
+        self, motor_id, timeout_ms: int, *, verify: bool = False
+    ) -> bool:
+        """Set per-motor CAN command timeout (ENCOS §9.2.10 / Timeout).
+
+        ``timeout_ms=0``: keep executing the last MIT command after bus disconnect.
+        Default firmware value is 500ms (controller disables on silence).
+        """
+        if not 1 <= motor_id <= MAX_ID:
+            return False
+        if not verify:
+            return self._send(self.encode_can_timeout_frame(timeout_ms), 4, motor_id)
+        was_running = self._pause_recv()
+        try:
+            return self._set_can_timeout_ms_verified(motor_id, int(timeout_ms))
+        finally:
+            self._resume_recv(was_running)
+
+    def _set_can_timeout_ms_verified(self, motor_id: int, timeout_ms: int) -> bool:
+        """Configure timeout while RX/keepalive are already paused."""
+        payload = self.encode_can_timeout_frame(timeout_ms)
+        target = int(timeout_ms)
+        for attempt in range(4):
+            # Keep MIT alive across the cfg window (timeout still 500ms until set).
+            if self.is_connected[motor_id - 1]:
+                self._refresh_hold_cmd(motor_id)
+            with self._lock:
+                self._serial.flush()
+            if not self._send(payload, 4, motor_id):
+                time.sleep(0.01)
+                continue
+            ok, reported = self._wait_config_or_query(
+                motor_id, want_timeout_ms=target, timeout_s=0.12)
+            if ok and reported == target:
+                return True
+            self.query_parameter(motor_id, QUERY_CAN_TIMEOUT)
+            ok_q, reported = self._wait_config_or_query(
+                motor_id, want_timeout_ms=target, timeout_s=0.12)
+            if ok_q and reported == target:
+                return True
+            if reported is not None:
+                print(
+                    f"[Incos] motor {motor_id}: timeout cfg "
+                    f"want={target} got={reported} (try {attempt + 1}/4)"
+                )
+            else:
+                print(
+                    f"[Incos] motor {motor_id}: timeout cfg no ACK/query "
+                    f"(try {attempt + 1}/4)"
+                )
+            time.sleep(0.02)
+        return False
+
+    def _refresh_hold_cmd(self, motor_id) -> None:
+        """Re-send hold MIT at current pose with non-zero gains."""
+        with self._cmd_lock:
+            cmd = self._last_cmd.get(motor_id)
+        q = self.get_position(motor_id)
+        if cmd is not None:
+            _q0, _dq, kp, kd, tau = cmd
+            kp = max(float(kp), _HOLD_KP)
+            kd = max(float(kd), _HOLD_KD)
+            self.mit_control(motor_id, q, 0.0, kp, kd, float(tau))
+            return
+        self.mit_control(motor_id, q, 0.0, _HOLD_KP, _HOLD_KD, 0.0)
+
+    def _bulk_hold(self) -> None:
+        with self._cmd_lock:
+            cmds = [
+                (mid, self._last_cmd[mid])
+                for mid in self._active_ids
+                if mid in self._last_cmd and self.is_connected[mid - 1]
+            ]
+        if not cmds:
+            return
+        frames = []
+        for mid, (_q, _dq, kp, kd, tau) in sorted(cmds, key=lambda x: -int(x[0])):
+            q = self.get_position(mid)
+            kp = max(float(kp), _HOLD_KP)
+            kd = max(float(kd), _HOLD_KD)
+            frames.append((self._encode_mit(kp, kd, q, 0.0, float(tau)), 8, mid))
+            self._record_cmd(mid, q, 0.0, kp, kd, float(tau))
+        with self._lock:
+            self._serial.send_bulk(frames)
+        self._last_tx_monotonic = time.monotonic()
+
+    def end(self, *, disable=True):
+        if disable:
+            for mid in self._active_ids:
+                if self.is_connected[mid - 1]:
+                    self.set_can_timeout_ms(mid, DEFAULT_CAN_TIMEOUT_MS, verify=False)
+                    time.sleep(0.002)
+            self._running = False
+            self.stop_keepalive()
+            if self._thread:
+                self._thread.join(timeout=1.0)
+                self._thread = None
+            for mid in self._active_ids:
+                if self.is_connected[mid - 1]:
+                    self.mit_control(mid, self.get_position(mid), 0.0, 0.0, 0.0, 0.0)
+                    self.is_enabled[mid - 1] = False
+                    time.sleep(0.002)
+        else:
+            # Keep-enabled park: ENCOS Timeout=0. Pause keepalive first — otherwise
+            # some IDs miss the cfg frame and still drop after the default 500ms.
+            print("[Incos] park hold: set CAN timeout=0 + freeze last MIT")
+            self._pause_recv()
+            try:
+                self._drain_rx(0.02)
+                for mid in self._active_ids:
+                    if self.is_connected[mid - 1]:
+                        self._refresh_hold_cmd(mid)
+                        time.sleep(0.003)
+                self._bulk_hold()
+                time.sleep(0.02)
+                for mid in self._active_ids:
+                    if not self.is_connected[mid - 1]:
+                        continue
+                    ok = self._set_can_timeout_ms_verified(mid, 0)
+                    self._refresh_hold_cmd(mid)
+                    print(
+                        f"[Incos] motor {mid}: CAN timeout→0 "
+                        f"{'VERIFIED' if ok else 'FAILED (may drop after 500ms)'}"
+                    )
+                    time.sleep(0.005)
+                for _ in range(3):
+                    self._bulk_hold()
+                    time.sleep(0.01)
+            finally:
+                self._running = False
+                self.stop_keepalive()
+                if self._thread:
+                    self._thread.join(timeout=1.0)
+                    self._thread = None
         if self._owns_serial:
             self._serial.end()
 

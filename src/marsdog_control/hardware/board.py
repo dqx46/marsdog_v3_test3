@@ -40,7 +40,7 @@ class MotorBoard(Protocol):
     def soft_disable(self, hold_target: Mapping[int, float], rt, *,
                      duration_s: float, control_hz: float, stop_check=None) -> bool: ...
     def disable(self, ids: Optional[Iterable[int]] = None) -> None: ...
-    def close(self) -> None: ...
+    def close(self, *, disable: bool = True) -> None: ...
 
 
 @dataclass
@@ -319,13 +319,13 @@ class RkMotorBoard:
                         self.evo.enter_rest_state(joint.motor_id)
                         time.sleep(0.002)
 
-    def close(self) -> None:
+    def close(self, *, disable=True) -> None:
         if self.incos is not None:
-            self.incos.end()
+            self.incos.end(disable=disable)
         if self.lz is not None:
-            self.lz.end()
+            self.lz.end(disable=disable)
         if self.evo is not None:
-            self.evo.end()
+            self.evo.end(disable=disable)
         if self.dm is not None:
             self.dm.end()
 

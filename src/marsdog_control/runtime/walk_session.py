@@ -136,6 +136,7 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
         return
 
     # ── 统一基准：所有方向测试也必须先走正常主控站姿 ───────────────────────
+    soft_disable = bool(getattr(args, "soft_disable", False))
     stand_ready = fade_to_stand(
         stand=stand, cur_pos=ctx.cur_pos, online=online,
         lz=lz, evo=evo, dm=dm, incos=incos,
@@ -146,10 +147,23 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
         joint_direction_test=startup.joint_direction_test,
         hip_abd_test=startup.hip_abd_test,
         leg_pitch_test=startup.leg_pitch_test,
+        # Hot-start: full stiffness throughout (no kp 0.3 soft dip).
+        kp_start=0.3 if soft_disable else 1.0,
+        kp_end=1.0,
+        stop_pose_hold=svc.stop_pose_hold,
     )
     if not stand_ready.ok:
         return
     direction_test_base = stand_ready.direction_test_base
+
+    # Hold stand pose through IMU/gamepad setup — log showed waist_pitch
+    # drifting +15° then snapping when the main loop resumed after ~2s gap.
+    stand_hold = dict(stand_ready.stand_motor) if stand_ready.stand_motor else {}
+    if stand_hold:
+        if dm is not None:
+            stand_hold.update(getattr(svc, "dm_fixed_targets", {}) or {})
+        svc.start_pose_hold(lz, evo, dm, incos, stand_hold)
+        print("[hold] 站立后保位 ON（覆盖 IMU/手柄初始化空窗）")
 
     # ── IMU 校准（站立后做，确保零位准确）─────────────────────────────────
     calibrate_imu_after_stand(
@@ -221,11 +235,15 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
             config=ctx.runtime_config or RuntimeConfig(),
         )
         # Sole steady-state path: RuntimeApp → pipeline.tick() → tick_walk_loop
+        # Keep stand-hold until the first control tick is about to run; stop in
+        # finally via shutdown_motors as well.
+        svc.stop_pose_hold()
         loop_result = RuntimeApp(pipeline=pipeline).run()
         runtime_state.dm.active = loop_result.dm_tarsus_active
         estopped_fall = loop_result.estopped_fall
         lie_down_hold = loop_result.lie_down_hold
     finally:
+        svc.stop_pose_hold()
         run_walk_shutdown(WalkShutdownContext(
             kb=kb,
             gp=gp,

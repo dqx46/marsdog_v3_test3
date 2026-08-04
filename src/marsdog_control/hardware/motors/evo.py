@@ -131,7 +131,7 @@ class MotorEvo:
         else:
             self._can.flush()
 
-    def init_serial(self, device="/dev/ttyUSB1", baud=921600):
+    def init_serial(self, device="/dev/ttyUSB1", baud=921600, *, clear_fault=True):
         """Open USB-CAN serial as CAN0 and enable EVO motors via CanSerial."""
         self._serial = CanSerial()
         if not self._serial.begin(device, baud):
@@ -139,13 +139,15 @@ class MotorEvo:
             return False
         self._use_serial = True
 
-        probe = bytes([0xFF] * 7 + [CMD_REST_STATE])
+        # REST clears fault but drops enable; MOTOR keeps torque on hot re-enter.
+        probe_cmd = CMD_REST_STATE if clear_fault else CMD_MOTOR_STATE
+        probe = bytes([0xFF] * 7 + [probe_cmd])
         with self._lock:
             self._flush_raw()
             for mid in MEVO_KNOWN_IDS:
                 self._send_raw(probe, 8, mid)
                 time.sleep(0.0005)
-        time.sleep(0.005)
+        time.sleep(0.05)
 
         t0 = time.monotonic()
         while time.monotonic() - t0 < 0.100:
@@ -171,6 +173,18 @@ class MotorEvo:
             print("[MotorEvo] no motor responded on serial")
             return False
 
+        # Critical: keepalive sends REST when _want_motor is False. Hot-start
+        # probes with MOTOR_STATE but must mark want=True or the recv loop will
+        # periodically disable hips/waist (seen as soft-drop + stand-end snap).
+        for mid in self._active_ids:
+            self._want_motor[mid - 1] = True
+            if not clear_fault:
+                try:
+                    q = self.position[mid - 1]
+                    self.ptm_control(mid, float(q), 0.0, 60.0, 4.0, 0.0)
+                except Exception:
+                    pass
+
         self._running = True
         self._thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._thread.start()
@@ -180,9 +194,10 @@ class MotorEvo:
         for mid in MEVO_KNOWN_IDS:
             self.enter_rest_state(mid)
 
-    def end(self):
+    def end(self, *, disable=True):
         self._running = False
-        self.stop_all()
+        if disable:
+            self.stop_all()
         if self._thread:
             self._thread.join(timeout=2)
         if self._use_serial and self._serial:
@@ -252,6 +267,9 @@ class MotorEvo:
         ])
 
         with self._lock:
+            # Any PTM implies we want MOTOR keepalive, not REST.
+            if 1 <= motor_id <= MAX_ID:
+                self._want_motor[motor_id - 1] = True
             return self._send_raw(data, 8, motor_id)
 
     def ptm_controls(self, motor_ids, thetas, v_refs=None,
@@ -286,6 +304,9 @@ class MotorEvo:
             ])
             frames.append((data, 8, mid))
         with self._lock:
+            for mid in motor_ids:
+                if 1 <= mid <= MAX_ID:
+                    self._want_motor[mid - 1] = True
             if self._use_serial and self._serial:
                 self._serial.send_bulk(frames)
             elif self._can:
@@ -313,19 +334,25 @@ class MotorEvo:
             with self._lock:
                 # 1. Occasional motor-state keep-alive (not every tick).
                 if do_keepalive:
+                    # Only keep-alive motors we explicitly want. Never spray REST
+                    # at unknown IDs — that was disabling hot-held EVO axes.
                     if self._use_serial and self._serial:
                         frames = []
                         for mid in MEVO_KNOWN_IDS:
                             idx = mid - 1
-                            cmd = CMD_MOTOR_STATE if self._want_motor[idx] else CMD_REST_STATE
-                            frames.append((bytes([0xFF] * 7 + [cmd]), 8, mid))
-                        self._serial.send_bulk(frames)
+                            if not self._want_motor[idx]:
+                                continue
+                            frames.append(
+                                (bytes([0xFF] * 7 + [CMD_MOTOR_STATE]), 8, mid))
+                        if frames:
+                            self._serial.send_bulk(frames)
                     else:
                         for mid in MEVO_KNOWN_IDS:
                             idx = mid - 1
-                            cmd = CMD_MOTOR_STATE if self._want_motor[idx] else CMD_REST_STATE
-                            data = bytes([0xFF] * 7 + [cmd])
-                            self._send_raw(data, 8, mid)
+                            if not self._want_motor[idx]:
+                                continue
+                            self._send_raw(
+                                bytes([0xFF] * 7 + [CMD_MOTOR_STATE]), 8, mid)
 
             # 2. 等待并收取应答（有 keep-alive 时稍等；否则只排空已有缓冲）
             if do_keepalive:

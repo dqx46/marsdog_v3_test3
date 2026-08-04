@@ -50,7 +50,12 @@ class WalkShutdownContext:
 
 
 def run_walk_shutdown(ctx: WalkShutdownContext) -> None:
-    """Run the real-robot safe shutdown sequence for the walk app."""
+    """Unwind walk session.
+
+    Default (debug-friendly): optional return-to-stand, then close host IO while
+    leaving motors enabled/holding. Pass ``--soft-disable`` for the old
+    soft_disable → hard disable path.
+    """
 
     ctx.kb.stop()
     if ctx.gp:
@@ -67,37 +72,45 @@ def run_walk_shutdown(ctx: WalkShutdownContext) -> None:
     from marsdog_control.backends.real import urdf_pose_to_motor
     cur2 = ctx.board.get_angles(include_dm=ctx.dm_tarsus_active)
     stand_final = urdf_pose_to_motor(ctx.stand.get_targets(0))
+    soft_disable = bool(getattr(ctx.args, "soft_disable", False))
+
     if ctx.joint_direction_test:
         print("\n\n[cleanup] 关节方向测试 -> 回正常站姿 (1.5s)...")
         ctx.smooth_transition(
             ctx.lz, ctx.evo, ctx.dm, ctx.incos, cur2, stand_final, 1.5,
             label="direction-return")
     elif ctx.lie_down_hold:
-        print("\n\n[cleanup] 已在趴下姿势 -> 不回站立, 直接缓速失能...")
+        print("\n\n[cleanup] 已在趴下姿势 -> 保持当前姿态退出...")
         stand_final = dict(cur2)
     elif ctx.estopped_fall:
-        print("\n\n[cleanup] 摔倒急停 -> 跳过回站立, 直接缓速失能...")
+        print("\n\n[cleanup] 摔倒急停 -> 保持当前姿态退出...")
         stand_final = dict(cur2)
     else:
         print("\n\n[cleanup] 回站立 (1.5s)...")
+        # Keep full stiffness when parking enabled (default); soft_disable keeps
+        # the gentler 0.3→1.0 ramp of the old cold path.
+        kp0 = 0.3 if soft_disable else 1.0
         ctx.smooth_transition(
             ctx.lz, ctx.evo, ctx.dm, ctx.incos, cur2, stand_final, 1.5,
-            label="return")
+            label="return", kp_start=kp0, kp_end=1.0)
 
-    disable_secs = 5.0
-    print(f"[cleanup] {disable_secs:.0f}s 缓速失能 (kp 10→0)...")
-    ctx.board.soft_disable(
-        stand_final, ctx.actuation_runtime(),
-        duration_s=disable_secs,
-        control_hz=ctx.control_hz,
-        stop_check=lambda: False,
-        clock=ctx.clock,
-    )
+    if soft_disable:
+        disable_secs = 5.0
+        print(f"[cleanup] {disable_secs:.0f}s 缓速失能 (kp 10→0)...")
+        ctx.board.soft_disable(
+            stand_final, ctx.actuation_runtime(),
+            duration_s=disable_secs,
+            control_hz=ctx.control_hz,
+            stop_check=lambda: False,
+            clock=ctx.clock,
+        )
+        print("[cleanup] 失能电机...")
+        ctx.board.disable()
+        ctx.shutdown_motors(ctx.lz, ctx.evo, ctx.dm, ctx.incos, disable=True)
+    else:
+        print("[cleanup] 保持使能退出（跳过缓速失能；需要旧行为加 --soft-disable）")
+        ctx.shutdown_motors(ctx.lz, ctx.evo, ctx.dm, ctx.incos, disable=False)
 
-    print("[cleanup] 失能电机...")
-    ctx.board.disable()
-
-    ctx.shutdown_motors(ctx.lz, ctx.evo, ctx.dm, ctx.incos)
     if ctx.imu is not None and getattr(ctx.imu, "connected", False):
         ctx.imu.close()
     if ctx.log_file:

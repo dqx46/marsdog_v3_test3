@@ -358,6 +358,8 @@ def main(args=None):
         all_ids=ALL_IDS,
         shutdown_motors=svc.shutdown_motors,
         clock=time,
+        # 默认热启：不 clear_fault 掉使能；--soft-disable 恢复冷启清障
+        clear_fault=bool(getattr(args, "soft_disable", False)),
     )
     if hw is None:
         return
@@ -378,7 +380,18 @@ def main(args=None):
     # 首次 fade-to-stand 的插值起点是电机实际角度, 而不是误当成 0.0 去斜坡。
     if dm is not None:
         cur_pos.update(DM_FIXED_TARGETS)
+    # Hot-start: hand off bring-up hold → pose hold (no MIT gap).
+    hot_hold = getattr(hw, "hot_hold", None)
+    if not bool(getattr(args, "soft_disable", False)):
+        svc.start_pose_hold(lz, evo, dm, incos, cur_pos)
+        if hot_hold is not None:
+            hot_hold.stop()
+            hw.hot_hold = None
+    elif hot_hold is not None:
+        hot_hold.stop()
+        hw.hot_hold = None
     if startup.capture_lie_pose:
+        svc.stop_pose_hold()
         save_lie_down_pose(_LIE_DOWN_POSE_PATH, cur_pos)
         kept = sorted(mid for mid in cur_pos if mid not in _NON_BODY_LIE_MOTOR_IDS)
         print(f"[lie-down] 已保存当前电机位置为趴下姿势: {_LIE_DOWN_POSE_PATH}")

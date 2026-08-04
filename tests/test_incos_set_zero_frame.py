@@ -32,6 +32,18 @@ class IncosSetZeroFrameTest(unittest.TestCase):
             bytes([0x00, 0x07, 0x00, 0x03]),
         )
 
+    def test_encode_can_timeout_matches_manual(self):
+        # Manual V1.19 §9.2.10 example: C00B01F4 → 500ms
+        self.assertEqual(
+            MotorIncos.encode_can_timeout_frame(500),
+            bytes([0xC0, 0x0B, 0x01, 0xF4]),
+        )
+        # 0 = disable CAN timeout (keep last MIT after disconnect)
+        self.assertEqual(
+            MotorIncos.encode_can_timeout_frame(0),
+            bytes([0xC0, 0x0B, 0x00, 0x00]),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

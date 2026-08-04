@@ -63,6 +63,7 @@ _OPEN_LOOP_GAIT_OPTS = frozenset({
     "--natural-walk",
     "--trot",
     "--no-tail",
+    "--soft-disable",
     "--show",
     "--help-all",
 })
@@ -402,6 +403,11 @@ def parse_args():
                    help="软件示波器通道 motor id, 逗号分隔, 默认3,7")
     p.add_argument("--no-tail",     action="store_true",
                    help="禁用尾巴后台动作控制")
+    p.add_argument(
+        "--soft-disable", action="store_true",
+        help="冷启/退出用旧行为: 启动 clear_fault 失能 + 退出缓速失能; "
+             "默认热启保持使能、只 fade 起立，退出也保持使能",
+    )
     p.add_argument("--imu",         action="store_true",
                    help="启用 IMU 闭环足高补偿(TEMP: 当前默认关闭, 需显式打开)")
     p.add_argument("--imu-test",    action="store_true",

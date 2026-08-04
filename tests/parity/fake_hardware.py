@@ -34,10 +34,10 @@ class FakeLz:
         self._can1_serial = object()
         self._can1_lock = None
 
-    def init_serial(self, dev, baud):
+    def init_serial(self, dev, baud, **kwargs):
         pass
 
-    def init_can1_serial(self, dev, baud):
+    def init_can1_serial(self, dev, baud, **kwargs):
         pass
 
     def add_can1_standard_handler(self, handler):
@@ -50,7 +50,7 @@ class FakeLz:
         self.is_enabled[mid - 1] = True
         self.fault[mid - 1] = 0
 
-    def disable(self, mid):
+    def disable(self, mid, clear_fault=False):
         self.is_enabled[mid - 1] = False
 
     def get_position(self, mid):
@@ -66,7 +66,7 @@ class FakeLz:
     def mit_controls_serial(self, ids, pos, vel, kp, kd, trq):
         self._track(ids, pos)
 
-    def end(self):
+    def end(self, **kwargs):
         pass
 
 
@@ -77,7 +77,7 @@ class FakeEvo:
         self.fault = [0] * _N
         self._pos = {}
 
-    def init_serial(self, dev, baud):
+    def init_serial(self, dev, baud, **kwargs):
         pass
 
     def enter_motor_state(self, mid):
@@ -99,7 +99,7 @@ class FakeEvo:
         for mid, p in zip(ids, pos):
             self._pos[mid] = p
 
-    def end(self):
+    def end(self, **kwargs):
         pass
 
 
@@ -192,7 +192,7 @@ class FakeIncos:
         self.is_enabled[mid - 1] = False
         return True
 
-    def end(self):
+    def end(self, **kwargs):
         pass
 
 

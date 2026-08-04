@@ -103,6 +103,8 @@ class MotorLz:
 
         self.is_running = False
         self._thread = None
+        self._init_hold_stop = None
+        self._init_hold_thread = None
 
         # 软件标定偏置（补偿 Flash 写入失败的老固件电机，如 Motor 12）
         self._calib_offset = self._load_calib()
@@ -451,7 +453,49 @@ class MotorLz:
         """Register a parser for standard CAN frames on the CAN-A serial bus."""
         self._can1_std_handlers.append(handler)
 
-    def init_serial(self, device="/dev/ttyUSB0", baud=921600):
+    def hold_connected(self, gains_by_id=None, *, default_kp=80.0, default_kd=4.0):
+        """MIT-hold every connected motor at its current pose (hot-start bridge)."""
+        gains_by_id = gains_by_id or {}
+        for mid in list(self._serial_set | self._can1_set):
+            idx = mid - 1
+            if not (0 <= idx < len(self.is_connected) and self.is_connected[idx]):
+                continue
+            q = self.get_position(mid)
+            kp, kd, tau = gains_by_id.get(mid, (default_kp, default_kd, 0.0))
+            try:
+                self.mit_control(mid, float(q), 0.0, float(kp), float(kd), float(tau))
+            except Exception:
+                pass
+
+    def _start_init_hold(self) -> None:
+        """200Hz hold while sequential enable probes later motors on this bus."""
+        if self._init_hold_thread is not None and self._init_hold_thread.is_alive():
+            return
+        stop = threading.Event()
+        self._init_hold_stop = stop
+
+        def _loop():
+            while not stop.wait(0.005):
+                try:
+                    self.hold_connected()
+                except Exception:
+                    pass
+
+        self._init_hold_thread = threading.Thread(
+            target=_loop, name="lz-init-hold", daemon=True)
+        self._init_hold_thread.start()
+
+    def _stop_init_hold(self) -> None:
+        stop = self._init_hold_stop
+        th = self._init_hold_thread
+        self._init_hold_stop = None
+        self._init_hold_thread = None
+        if stop is not None:
+            stop.set()
+        if th is not None and th.is_alive():
+            th.join(timeout=0.5)
+
+    def init_serial(self, device="/dev/ttyUSB0", baud=921600, *, clear_fault=True):
         """Open serial USB-CAN and enable serial motors."""
         self._load_models()
         self._serial_set = set(RS05_SERIAL_IDS)
@@ -460,10 +504,14 @@ class MotorLz:
             self._serial_set.clear()
             return False
 
-        for mid in RS05_SERIAL_IDS:
-            self.disable(mid, clear_fault=True)
-            time.sleep(0.005)
-        time.sleep(0.05)
+        if not clear_fault:
+            self._start_init_hold()
+
+        if clear_fault:
+            for mid in RS05_SERIAL_IDS:
+                self.disable(mid, clear_fault=True)
+                time.sleep(0.005)
+            time.sleep(0.05)
 
         for mid in RS05_SERIAL_IDS:
             with self._serial_lock:
@@ -486,7 +534,14 @@ class MotorLz:
                 if rmid == mid:
                     self._parse_feedback(mid, eid, data)
                     break
-            time.sleep(0.005)
+            # Hot-start: freeze pose immediately — do not wait for other buses.
+            idx = mid - 1
+            if (not clear_fault) and self.rx_count[idx] > 0 and self.mode[idx] == 2:
+                self.is_connected[idx] = True
+                self._calc_pos_offset(mid)
+                q = self.get_position(mid)
+                self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
+            time.sleep(0.002)
 
         # Verify and compute multi-turn offsets
         for mid in RS05_SERIAL_IDS:
@@ -500,6 +555,9 @@ class MotorLz:
                       f"rx={self.rx_count[idx]})")
 
         self._start_recv_thread()
+        if not clear_fault:
+            self.hold_connected()
+            self._stop_init_hold()
         return True
 
     def init(self, interface="can1"):
@@ -556,7 +614,7 @@ class MotorLz:
 
         return True
 
-    def init_can1_serial(self, device="/dev/ttyUSB0", baud=921600):
+    def init_can1_serial(self, device="/dev/ttyUSB0", baud=921600, *, clear_fault=True):
         """Open USB-CAN serial as CAN1 bus and enable CAN1 LZ motors (IDs 1-6,15)."""
         self._load_models()
         self._can1_set = set(RS05_CAN_IDS)
@@ -565,11 +623,14 @@ class MotorLz:
             self._can1_set.clear()
             return False
 
-        # Clear faults
-        for mid in RS05_CAN_IDS:
-            self.disable(mid, clear_fault=True)
-            time.sleep(0.005)
-        time.sleep(0.05)
+        if not clear_fault:
+            self._start_init_hold()
+
+        if clear_fault:
+            for mid in RS05_CAN_IDS:
+                self.disable(mid, clear_fault=True)
+                time.sleep(0.005)
+            time.sleep(0.05)
 
         # Enable and read feedback
         for mid in RS05_CAN_IDS:
@@ -592,7 +653,13 @@ class MotorLz:
                 if rmid == mid:
                     self._parse_feedback(mid, eid, data)
                     break
-            time.sleep(0.005)
+            idx = mid - 1
+            if (not clear_fault) and self.rx_count[idx] > 0 and self.mode[idx] == 2:
+                self.is_connected[idx] = True
+                self._calc_pos_offset(mid)
+                q = self.get_position(mid)
+                self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
+            time.sleep(0.002)
 
         for mid in RS05_CAN_IDS:
             idx = mid - 1
@@ -605,17 +672,22 @@ class MotorLz:
                       f"rx={self.rx_count[idx]})")
 
         self._start_recv_thread()
+        if not clear_fault:
+            self.hold_connected()
+            self._stop_init_hold()
         return True
 
-    def end(self):
-        """Disable all and shutdown (from old driver close())."""
+    def end(self, *, disable=True):
+        """Shutdown host-side IO. ``disable=True`` also sends motor disable."""
+        self._stop_init_hold()
         self.is_running = False
         if self._thread:
             self._thread.join(timeout=2)
-        for mid in RS05_CAN_IDS + RS05_SERIAL_IDS:
-            if self.is_connected[mid - 1]:
-                self.disable(mid)
-                time.sleep(0.002)
+        if disable:
+            for mid in RS05_CAN_IDS + RS05_SERIAL_IDS:
+                if self.is_connected[mid - 1]:
+                    self.disable(mid)
+                    time.sleep(0.002)
         if self.tx_sock:
             self.tx_sock.close()
             self.tx_sock = None
