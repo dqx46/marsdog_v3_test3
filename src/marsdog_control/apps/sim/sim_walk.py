@@ -165,10 +165,15 @@ def main():
     # 0.10 m/s ≈ 新菜谱中速；半速 --vx 0.067；偏快满幅 --vx 0.13
     drive_vx = 0.10
     drive_turn = 0.0
+    stand_only = False
     filtered = []
     i = 1
     while i < len(old_argv):
         a = old_argv[i]
+        if a in ("--stand-only", "--stand"):
+            stand_only = True
+            i += 1
+            continue
         if a == "--duration" and i + 1 < len(old_argv):
             try:
                 duration_s = float(old_argv[i + 1])
@@ -214,11 +219,15 @@ def main():
             i += 1
             continue
         if a in ("--headless", "--natural-soft-trot", "--natural-walk", "--jump",
-                 "--vmc", "--no-vmc", "--wbc", "--no-wbc"):
+                 "--vmc", "--no-vmc", "--wbc", "--no-wbc", "--stand-only", "--stand"):
             i += 1
             continue
         filtered.append(a)
         i += 1
+
+    if stand_only:
+        drive_vx = 0.0
+        drive_turn = 0.0
 
     forced = ["--natural-soft-trot"]
     user_wants_jump = "--jump" in old_argv
@@ -258,6 +267,8 @@ def main():
     print(
         "[Sim] using SIM_JOINT_GAINS (SI impedance; real Incos load gains not applied)"
     )
+    if stand_only:
+        print("[Sim] --stand-only：保持 STAND，不自动切入行走")
     print(
         f"[Sim] --vx {drive_vx:.3f} → cruise_vx={abs(float(drive_vx)):.3f} m/s "
         f"(中速默认 0.10；满幅约 0.13；半速 0.067)"
@@ -339,6 +350,10 @@ def main():
     def fake_poll(fsm):
         from marsdog_control.core.types import UserCommand, RobotMode
         cmd = UserCommand()
+        if stand_only:
+            # 纯站立：永不切入 NATURAL/WALK，摇杆保持零
+            fake_poll.tick += 1
+            return cmd, None
         if fake_poll.tick == 200:
             if getattr(startup, "natural_jump", False):
                 target = RobotMode.JUMP

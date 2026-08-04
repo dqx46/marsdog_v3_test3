@@ -334,9 +334,13 @@ class SimRobotBackend(RobotBackend):
         self._mjcf_path = _build_physics_mjcf(physics_options)
         self.model = mujoco.MjModel.from_xml_path(self._mjcf_path)
         self.data = mujoco.MjData(self.model)
-        # Soft-contact scrub: viscous freejoint XY damp while standing/holding
-        # (1/s). 0 = off. Walk loop enables this when vx_cmd≈0.
+        # Soft-contact scrub:
+        #   hold (STAND/jump ground): nail freejoint XY to an anchor.
+        #   walk: light viscous XY damp kills the constant ~cm/s sole scrub
+        #         without freezing plant (damp in 1/s; 0 = off).
         self._xy_hold_damp = 0.0
+        self._xy_walk_damp = 0.0
+        self._xy_hold_anchor = None  # (x, y) while hold active; None = unlocked
         # URDF <limit effort> 会写成 jnt_actfrcrange；仅改 actuator forcerange
         # 不够——力矩仍被关节侧钳死(前腿 tarsus 旧值 0.4119Nm → 跪地)。
         self._apply_joint_actuator_force_limits()
@@ -646,20 +650,52 @@ class SimRobotBackend(RobotBackend):
         pass
 
     def set_xy_hold_damp(self, damp_per_s: float) -> None:
-        """Viscous freejoint XY damp (1/s). Use while standing to kill scrub."""
-        self._xy_hold_damp = max(0.0, float(damp_per_s))
+        """Enable/disable stand XY nail (sim-only scrub kill).
+
+        ``damp_per_s > 0`` freezes freejoint XY to an anchor captured after plant.
+        ``0`` releases the nail so the dog can walk.
+        """
+        on = float(damp_per_s) > 1e-9
+        if not on:
+            self._xy_hold_anchor = None
+        self._xy_hold_damp = 150.0 if on else 0.0
+
+    def set_xy_walk_damp(self, damp_per_s: float) -> None:
+        """Light viscous freejoint XY damp (1/s) while locomoting."""
+        self._xy_walk_damp = max(0.0, float(damp_per_s))
 
     def step(self, n: int = N_SUBSTEPS) -> None:
-        damp = float(self._xy_hold_damp)
-        decay = math.exp(-damp * PHYSICS_DT) if damp > 1e-9 else 1.0
+        hold = float(self._xy_hold_damp) > 1e-9
+        walk_damp = float(self._xy_walk_damp)
+        walk_decay = (
+            math.exp(-walk_damp * PHYSICS_DT) if (not hold and walk_damp > 1e-9)
+            else 1.0
+        )
+        qadr = int(self._base_qadr)
+        dadr = int(self._base_dof)
         for _ in range(n):
             self._sync_passive_tarsus()
+            if hold and self._xy_hold_anchor is None and qadr >= 0:
+                # Capture once feet have started settling (skip free-fall frame 0).
+                if float(self.data.time) >= 0.25:
+                    self._xy_hold_anchor = (
+                        float(self.data.qpos[qadr + 0]),
+                        float(self.data.qpos[qadr + 1]),
+                    )
             mujoco.mj_step(self.model, self.data)
             self._sync_passive_tarsus()
-            if decay < 1.0:
-                # Freejoint linear XY only — leave yaw/vertical alone.
-                self.data.qvel[0] *= decay
-                self.data.qvel[1] *= decay
+            if dadr < 0:
+                continue
+            if hold and self._xy_hold_anchor is not None and qadr >= 0:
+                # Nail XY — soft-contact forces otherwise integrate a constant slide.
+                self.data.qpos[qadr + 0] = self._xy_hold_anchor[0]
+                self.data.qpos[qadr + 1] = self._xy_hold_anchor[1]
+                self.data.qvel[dadr + 0] = 0.0
+                self.data.qvel[dadr + 1] = 0.0
+            elif walk_decay < 1.0:
+                # Bleed scrub; leave commanded plant motion mostly intact.
+                self.data.qvel[dadr + 0] *= walk_decay
+                self.data.qvel[dadr + 1] *= walk_decay
 
     @property
     def sim_time(self) -> float:

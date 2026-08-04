@@ -419,8 +419,10 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
     trq_ff = output.trq_ff
     ctrl_dt = output.control_period_s
 
-    # Sim: kill soft-contact XY scrub while standing / jump hold.
-    # Off during crouch/push/flight so launch friction isn't stolen.
+    # Sim: nail freejoint XY while STAND / jump ground-hold (kills soft-sole scrub).
+    # While walking: light viscous XY damp bleeds the constant scrub overshoot
+    # (truth was ~0.13 vs cmd ~0.04). Do NOT key off vel_cmd — SoftTrot cruise
+    # is often ~0.04 and used to falsely freeze mid-gait.
     if ctx.backend is not None and hasattr(ctx.backend, "set_xy_hold_damp"):
         hold_xy = False
         if active_trot is None:
@@ -430,11 +432,10 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
             if fam == "jump":
                 ph = getattr(getattr(active_trot, "phase", None), "value", "idle")
                 hold_xy = ph not in ("crouch", "push", "flight")
-            elif not bool(getattr(active_trot, "spot_turn_active", False)):
-                vc = getattr(active_trot, "vel_cmd", None)
-                if vc is not None and abs(float(vc[0])) <= 0.05:
-                    hold_xy = True
-        ctx.backend.set_xy_hold_damp(150.0 if hold_xy else 0.0)
+        ctx.backend.set_xy_hold_damp(1.0 if hold_xy else 0.0)
+        if hasattr(ctx.backend, "set_xy_walk_damp"):
+            # ~55/s matches SoftTrot cmd≈truth at cruise 0.10 (scrub alone was ~3×).
+            ctx.backend.set_xy_walk_damp(0.0 if hold_xy else 55.0)
 
     # ── Send ──
     if ctx.backend is not None:
