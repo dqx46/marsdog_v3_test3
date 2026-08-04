@@ -285,7 +285,8 @@ def parse_args():
                    help="[临时] kp 叠加缩放(默认1.0)。SoftTrot 请改 config/gains.py 分品牌表，"
                         "勿再用本参数做全局软化；跳步阶段仍可能临时改写")
     p.add_argument("--x-shift",     type=float, default=GAIT.x_shift,
-                   help="四脚落脚点整体X偏移(m); 正值=脚向前, 等效重心后移 (默认0)")
+                   help="四脚落脚点整体X偏移(m); 正值=脚向前, 等效重心后移 "
+                        f"(默认 {GAIT.x_shift})")
     # ── A: 线性油门 → 步幅缩放 ──
     p.add_argument("--throttle-min-scale", type=float, default=GAIT.throttle_min_scale,
                    help="[A] 线性油门: 轻推时的最小步幅比例 (默认0.5; 设1.0=恒定满步幅=旧行为)")

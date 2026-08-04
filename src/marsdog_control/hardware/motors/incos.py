@@ -205,6 +205,86 @@ class MotorIncos:
             return False
         return self._send(bytes([0xE1, query_code]), 2, motor_id)
 
+    @staticmethod
+    def encode_set_zero_frame(motor_id: int) -> bytes:
+        """ENCOS V1.19 §7.2: set-current-as-zero (no angle offset), 4 bytes."""
+        mid = int(motor_id)
+        return bytes([(mid >> 8) & 0xFF, mid & 0xFF, 0x00, 0x03])
+
+    def _pause_recv(self):
+        """Stop background RX so 0x7FF ACK is not stolen/dropped."""
+        self.stop_keepalive()
+        was_running = self._running
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        return was_running
+
+    def _resume_recv(self, was_running: bool):
+        if was_running and self._thread is None:
+            self._running = True
+            self._thread = threading.Thread(target=self._recv_loop, daemon=True)
+            self._thread.start()
+            self.start_keepalive()
+
+    def set_zero_position(self, motor_id, timeout_s=0.8):
+        """Set current encoder position as mechanical zero (ENCOS §7.2).
+
+        Broadcast on CAN ID ``0x7FF``: ``[id_hi, id_lo, 0x00, 0x03]``.
+        Success ACK: ``[id_hi, id_lo, 0x01, 0x03]`` on ``0x7FF``.
+        Manual: hold still ≥500ms before the command.
+        """
+        if not 1 <= motor_id <= MAX_ID:
+            return False
+
+        # Hold still with zero gains, then pause RX for the ACK window.
+        cur = self.get_position(motor_id)
+        self.mit_control(motor_id, cur, 0.0, 0.0, 0.0, 0.0)
+        time.sleep(0.55)
+
+        was_running = self._pause_recv()
+        try:
+            payload = self.encode_set_zero_frame(motor_id)
+            with self._lock:
+                self._serial.flush()
+                if not self._serial.send_msg(payload, 4, 0x7FF):
+                    return False
+            deadline = time.monotonic() + max(0.2, float(timeout_s))
+            while time.monotonic() < deadline:
+                with self._lock:
+                    msg = self._serial.read_msg()
+                if not msg:
+                    time.sleep(0.002)
+                    continue
+                can_id, dlc, data = msg
+                cid = can_id & 0x7FF
+                if cid == 0x7FF and dlc >= 4:
+                    mid = (data[0] << 8) | data[1]
+                    if mid != motor_id:
+                        continue
+                    if data[2] == 0x01 and data[3] == 0x03:
+                        return True
+                    if data[2] == 0x01 and data[3] == 0x00:
+                        return False
+                elif not (can_id & CAN_EFF_FLAG) and 1 <= cid <= MAX_ID and dlc >= 1:
+                    self._parse_feedback(cid, data[:dlc])
+            # No ACK: still try a position query — some adapters drop 0x7FF RX.
+            self.query_parameter(motor_id, QUERY_POSITION)
+            time.sleep(0.05)
+            with self._lock:
+                while True:
+                    msg = self._serial.read_msg()
+                    if not msg:
+                        break
+                    can_id, dlc, data = msg
+                    cid = can_id & 0x7FF
+                    if not (can_id & CAN_EFF_FLAG) and 1 <= cid <= MAX_ID:
+                        self._parse_feedback(cid, data[:dlc])
+            return abs(self.get_position(motor_id)) < math.radians(8.0)
+        finally:
+            self._resume_recv(was_running)
+
     def mit_control(self, motor_id, pos_rad, vel_rad=0.0,
                     kp=10.0, kd=0.5, torque_ff=0.0):
         data = self._encode_mit(kp, kd, pos_rad, vel_rad, torque_ff)

@@ -7,18 +7,25 @@ cd /userdata/marsdog_ws2/marsdogv3_ws/mocap_to_real
 
 ## 1. 设零位
 
-摆好 URDF 零位姿态后执行：
+摆好 URDF 零位姿态后执行（**含因克斯 2/3/6/7**；默认跳过头/颈 15–18）：
 
 ```bash
-# 全部电机设零（头部/脖子除外）
-python3 set_zero_all.py
+cd /home/cat/marsdog_v3_test3
 
-# 只设指定电机
-python3 set_zero_all.py --ids 4,8
+# 演习（不写 Flash）
+./run_with_env.sh python -m marsdog_control.apps.tools.calibration.set_zero_all --dry-run
 
-# 演习模式（不实际写入）
-python3 set_zero_all.py --dry-run
+# 整机设零（灵足 + EVO + 因克斯 + 达妙）
+./run_with_env.sh python -m marsdog_control.apps.tools.calibration.set_zero_all
+
+# 只设因克斯前腿
+./run_with_env.sh python -m marsdog_control.apps.tools.calibration.set_zero_all --ids 2,3,6,7
+
+# 跳过达妙 tarsus
+./run_with_env.sh python -m marsdog_control.apps.tools.calibration.set_zero_all --no-dm
 ```
+
+达妙无掉电零点记忆：即使脚本里设了，下次上电前仍需掰到硬限位。
 
 ## 2. 回零位
 

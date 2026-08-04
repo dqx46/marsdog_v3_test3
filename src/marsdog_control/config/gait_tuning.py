@@ -32,7 +32,9 @@ class GaitCliDefaults:
     """Argparse / from_args defaults for gait knobs outside RuntimeConfig."""
 
     # stand / geometry
-    x_shift: float = 0.015
+    # 2026-08-04 真机 sim_com_balance: final com_x=-0.015 → x_shift=-com_x
+    # 叠在原默认 0.015 的站立偏置上 → 固化 0.030（脚前移/重心后移 +30mm）
+    x_shift: float = 0.030
     waist_pitch: float = 0.05
     waist_yaw_offset: float = 0.0
     front_stand_foot_pitch_deg: float = -90.0

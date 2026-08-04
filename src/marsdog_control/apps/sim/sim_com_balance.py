@@ -76,6 +76,7 @@ _TOOL_FLAGS = (
     "--smoke-keys",
     "--real",
     "--allow-lift",
+    "--no-log-joints",
     "--duration",
     "--com-step",
     "--lift-z",
@@ -83,6 +84,9 @@ _TOOL_FLAGS = (
     "--max-tilt-deg",
     "--fade-s",
 )
+
+# 日志里打印的主动关节（跳过未接线 tarsus）
+_LOG_JOINT_IDS = tuple(j.motor_id for j in JOINT_MAP if j.bus != "none")
 
 _HELP = """
 Keys (this tool only — not walk hotkeys):
@@ -164,6 +168,11 @@ def _parse_tool_flags(argv: list[str]):
     p.add_argument("--lift-z", type=float, default=0.025, help="FL–RR lift height (m)")
     p.add_argument("--log-hz", type=float, default=5.0, help="Status print rate")
     p.add_argument(
+        "--no-log-joints",
+        action="store_true",
+        help="Do not print joint angles (tgt/fb deg) with status lines",
+    )
+    p.add_argument(
         "--max-tilt-deg",
         type=float,
         default=20.0,
@@ -231,6 +240,50 @@ def _control_output(
     )
 
 
+def _format_joint_deg_line(
+    label: str,
+    q: Dict[int, float],
+    *,
+    ids: tuple = _LOG_JOINT_IDS,
+) -> str:
+    """One compact line: ``[q] tgt(deg) fl_hip=+45.6 ...``."""
+    from marsdog_control.config.joints import JOINT_BY_ID
+
+    parts = []
+    for mid in ids:
+        j = JOINT_BY_ID.get(mid)
+        if j is None or mid not in q:
+            continue
+        name = j.name
+        for prefix in ("fl_", "fr_", "rl_", "rr_"):
+            if name.startswith(prefix):
+                name = prefix[:2] + "_" + name[len(prefix):]
+                break
+        # shorten common suffixes
+        name = (
+            name.replace("hip_pitch", "hip")
+            .replace("thigh_roll", "roll")
+            .replace("waist_pitch", "w_p")
+            .replace("waist_yaw", "w_y")
+            .replace("waist_roll", "w_r")
+            .replace("neck_pitch", "neck")
+            .replace("head_pitch", "h_p")
+            .replace("head_yaw", "h_y")
+            .replace("head_roll", "h_r")
+        )
+        parts.append(f"{name}={math.degrees(q[mid]):+.1f}")
+    return f"[q] {label}(deg) " + " ".join(parts)
+
+
+def _print_joint_angles(
+    targets: Dict[int, float],
+    measured: Optional[Dict[int, float]] = None,
+) -> None:
+    print(_format_joint_deg_line("tgt", targets))
+    if measured:
+        print(_format_joint_deg_line("fb ", measured))
+
+
 def _bootstrap_stand(tool):
     """Shared SoftTrot stand + planner (sim or real gains).
 
@@ -252,7 +305,7 @@ def _bootstrap_stand(tool):
     stand = stack.stand
     grav_scale = float(getattr(runtime_state, "gravity_scale", 1.0) or 1.0)
     gravity_on = bool(getattr(runtime_state, "gravity_comp", True))
-    planner = BalanceStandPlanner(stand, lift_z_m=tool.lift_z)
+    planner = BalanceStandPlanner(stand, lift_z_m=tool.lift_z, com_x_m=0.040)
     pin_com = pinocchio_com_in_base(stand)
 
     print(
@@ -314,7 +367,9 @@ def _run_sim(tool, ctx) -> int:
         {80: "w", 120: "a", 160: "q", 220: "e", 280: "r"} if tool.smoke_keys else {}
     )
 
-    def _log() -> None:
+    log_joints = not bool(tool.no_log_joints)
+
+    def _log(targets: Optional[Dict[int, float]] = None) -> None:
         contacts = sorted(backend.foot_contacts())
         com = backend.com_xy
         pos = backend.base_pos
@@ -324,6 +379,15 @@ def _run_sim(tool, ctx) -> int:
             f"base=({pos[0]:+.4f},{pos[1]:+.4f},z={pos[2]:.3f})  "
             f"contact={contacts or '-'}"
         )
+        if log_joints:
+            tgt = targets if targets is not None else planner.get_targets()
+            fb = None
+            try:
+                st = backend.read_state(set(_LOG_JOINT_IDS))
+                fb = st.joint_pos
+            except Exception:
+                fb = None
+            _print_joint_angles(tgt, fb)
 
     def _tick_once() -> bool:
         nonlocal tick, running
@@ -350,7 +414,7 @@ def _run_sim(tool, ctx) -> int:
         backend.step()
         tick += 1
         if tick % log_every == 0:
-            _log()
+            _log(targets)
         if max_ticks and tick >= max_ticks:
             print(f"[CoMBal] duration reached ({tool.duration:.1f}s)")
             running = False
@@ -381,7 +445,7 @@ def _run_sim(tool, ctx) -> int:
         print("\n[CoMBal] interrupted")
     finally:
         keyboard.stop()
-        _log()
+        _log(planner.get_targets())
         print(
             f"[CoMBal] done  ticks={tick}  final {planner.describe()}  "
             f"(record this com_x/y if still balanced)"
@@ -517,15 +581,28 @@ def _run_real(tool, ctx) -> int:
     running = True
     abort_reason = ""
 
-    def _log(roll: float, pitch: float) -> None:
+    log_joints = not bool(tool.no_log_joints)
+
+    def _log(
+        roll: float,
+        pitch: float,
+        targets: Optional[Dict[int, float]] = None,
+        measured: Optional[Dict[int, float]] = None,
+    ) -> None:
         print(
             f"[CoMBal] {planner.describe()}  "
             f"imu_rpy=({math.degrees(roll):+.1f},{math.degrees(pitch):+.1f})deg  "
             f"allow_lift={allow_lift}"
         )
+        if log_joints:
+            tgt = targets if targets is not None else planner.get_targets()
+            _print_joint_angles(tgt, measured)
 
     try:
         print("[CoMBal] real loop — WASD / E / R / X  (Q only with --allow-lift)")
+        if log_joints:
+            print("[CoMBal] joint log ON  (tgt=command URDF deg, fb=feedback URDF deg; "
+                  "--no-log-joints to disable)")
         while running:
             t_loop = time.time()
             while True:
@@ -570,7 +647,7 @@ def _run_real(tool, ctx) -> int:
             backend.send(_control_output(targets, trq))
             tick += 1
             if tick % log_every == 0:
-                _log(state.roll, state.pitch)
+                _log(state.roll, state.pitch, targets, state.joint_pos)
             if max_ticks and tick >= max_ticks:
                 print(f"[CoMBal] duration reached ({tool.duration:.1f}s wall)")
                 abort_reason = "duration"
@@ -591,6 +668,12 @@ def _run_real(tool, ctx) -> int:
             trq = gravity_trq(targets, grav_scale) if gravity_on else {}
             backend.send(_control_output(targets, trq))
             time.sleep(0.05)
+            if log_joints:
+                try:
+                    st = backend.read_state(online)
+                    _print_joint_angles(targets, st.joint_pos)
+                except Exception:
+                    _print_joint_angles(targets)
         except Exception:
             pass
         print(
