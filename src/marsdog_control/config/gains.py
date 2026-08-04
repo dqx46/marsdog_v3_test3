@@ -42,7 +42,7 @@ JOINT_GAINS = {
     # Lz 前大腿: |err|~1.0° → 略加刚度
     "fl_hip_pitch":  {"kp": 115.0, "kd": 5.5, "trq_ff": 0.0},
     "fr_hip_pitch":  {"kp": 115.0, "kd": 5.5, "trq_ff": 0.0},
-    # Incos 前外展 (IDs 2/6): com_shift±12mm 全靠此轴
+    # Incos 前外展 (IDs 2/6): com_shift 横向移重全靠此轴
     "fl_thigh_roll": {"kp": 55.0,  "kd": 3.2, "trq_ff": 0.0},
     "fr_thigh_roll": {"kp": 55.0,  "kd": 3.2, "trq_ff": 0.0},
     # Incos 前小腿 (IDs 3/7): 仍为最大 |err|

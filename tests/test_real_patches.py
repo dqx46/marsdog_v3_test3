@@ -65,7 +65,7 @@ class RealPatchesTest(unittest.TestCase):
         self.assertFalse(args.dm_dq_feedforward)
         self.assertEqual(float(args.tarsus_lead_fl_ms), 0.0)
         self.assertEqual(float(args.spine_yaw_deg), 0.0)
-        self.assertAlmostEqual(float(args.com_shift_m), 0.012)
+        self.assertAlmostEqual(float(args.com_shift_m), 0.004)
         self.assertAlmostEqual(float(args.front_foot_swing_track), 1.0)
         on = {k for k, is_on, _ in patch_status(args) if is_on}
         self.assertEqual(on, {"com_shift"})

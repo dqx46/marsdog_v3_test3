@@ -18,7 +18,10 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from marsdog_control.apps.walk_cli import apply_preset_preserving_cli
+from marsdog_control.apps.walk_cli import (
+    apply_preset_preserving_cli,
+    print_open_loop_params,
+)
 from marsdog_control.compat import ensure_legacy_path, project_root
 from marsdog_control.config.gait_tuning import GAIT, print_tuning_banner
 from marsdog_control.config.real_patches import print_patch_banner
@@ -228,6 +231,10 @@ def prepare_walk_startup(
                 f"[COM] SoftTrot 横向移重 OFF "
                 f"(回退 lateral_sway={sway*1000:.1f}mm 半正弦)"
             )
+
+    if bool(getattr(args, "show", False)):
+        print_open_loop_params(args)
+        return None
 
     walk_params = dict(
         NATURAL_WALK_WBC if bool(getattr(args, "wbc", False)) else NATURAL_WALK_REAL

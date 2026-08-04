@@ -32,9 +32,8 @@ class GaitCliDefaults:
     """Argparse / from_args defaults for gait knobs outside RuntimeConfig."""
 
     # stand / geometry
-    # 2026-08-04 真机 sim_com_balance: final com_x=-0.015 → x_shift=-com_x
-    # 叠在原默认 0.015 的站立偏置上 → 固化 0.030（脚前移/重心后移 +30mm）
-    x_shift: float = 0.030
+    # 2026-08-04 真机试走：x_shift=0（不前后偏置）；左右用 com_shift=4mm
+    x_shift: float = 0.0
     waist_pitch: float = 0.05
     waist_yaw_offset: float = 0.0
     front_stand_foot_pitch_deg: float = -90.0
@@ -55,7 +54,7 @@ class GaitCliDefaults:
     reactive_kd: float = 0.0
     lateral_sway: float = 0.0
     # SoftTrot 横向质心规划 (m); >0 时用事件型移重，覆盖 half-sine lateral_sway
-    com_shift_m: float = 0.012
+    com_shift_m: float = 0.004
     com_shift_blend: float = 0.15
     anti_roll: float = 0.0
     trot_roll_ff_neg_deg: float = 0.0

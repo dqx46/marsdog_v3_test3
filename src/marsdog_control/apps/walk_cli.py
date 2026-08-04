@@ -18,11 +18,148 @@ from marsdog_control.motion.gait_recipes import (
     apply_values,
 )
 
+# Default ``--help`` / usage 只展示这些开环 SoftTrot 调参；其余见 ``--help-all``。
+_OPEN_LOOP_GAIT_OPTS = frozenset({
+    "--height",
+    "--gait-period",
+    "--gait-hz",
+    "--period",
+    "--nat-period",
+    "--stance",
+    "--step-h",
+    "--step-h-front",
+    "--amp-front",
+    "--amp-rear",
+    "--nat-amp-front",
+    "--nat-amp-rear",
+    "--nat-step-h",
+    "--fwd-front-lift",
+    "--fwd-front-amp-scale",
+    "--retract-front",
+    "--retract-rear",
+    "--front-foot-track-deg",
+    "--front-foot-stance-push-deg",
+    "--front-foot-swing-track",
+    "--front-thrust-gain",
+    "--front-thrust-swing-gain",
+    "--x-shift",
+    "--com-shift",
+    "--com-shift-blend",
+    "--lateral-sway",
+    "--rear-clearance",
+    "--hip-abd",
+    "--waist-pitch",
+    "--leg-kp-scale",
+    "--cruise-vx",
+    "--throttle-min-scale",
+    "--fade",
+    "--ramp",
+    "--bwd-amp-scale",
+    "--bwd-step-h",
+    "--bwd-period",
+    "--natural-soft-trot",
+    "--no-natural-soft-trot",
+    "--natural-trot",
+    "--natural-walk",
+    "--trot",
+    "--no-tail",
+    "--show",
+    "--help-all",
+})
+
+_UNKNOWN_OPT_HINTS = {
+    "--y-shift": "Y 向质心用 --com-shift（左右移重）；X 向用 --x-shift（前后）",
+    "--com-y": "Y 向质心用 --com-shift",
+    "--com-x": "X 向质心用 --x-shift",
+}
+
+
+class _WalkArgParser(argparse.ArgumentParser):
+    """Short usage by default; full option dump only via --help-all."""
+
+    def format_usage(self) -> str:
+        return (
+            f"usage: {self.prog} [开环步态参数...] [选项]\n"
+            f"       常用: --x-shift / --com-shift / --gait-period / --stance / "
+            f"--height / --no-tail / --show\n"
+            f"       开环清单: --help    全部参数: --help-all\n"
+        )
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        for token in sys.argv[1:]:
+            key = token.split("=", 1)[0]
+            hint = _UNKNOWN_OPT_HINTS.get(key)
+            if hint:
+                self.exit(2, f"{self.prog}: error: {message}\n提示: {hint}\n")
+        self.exit(2, f"{self.prog}: error: {message}\n")
+
+
+def _filter_help_to_open_loop(parser: argparse.ArgumentParser) -> None:
+    """Hide non-open-loop knobs from default --help (flags still work)."""
+    if "--help-all" in sys.argv[1:]:
+        return
+    for action in parser._actions:
+        opts = set(action.option_strings)
+        if not opts or opts & {"-h", "--help"}:
+            continue
+        if opts & _OPEN_LOOP_GAIT_OPTS:
+            continue
+        action.help = argparse.SUPPRESS
+
+
+def print_open_loop_params(args) -> None:
+    """Print SoftTrot open-loop summary (after preset + CLI); no motor bring-up."""
+    period = float(getattr(args, "nat_period", 0.0) or getattr(args, "period", 0.0) or 0.0)
+    stance = float(getattr(args, "stance", 0.0) or 0.0)
+    step_h = float(getattr(args, "step_h", 0.0) or 0.0)
+    step_hf = getattr(args, "step_h_front", None)
+    step_hf = float(step_hf) if step_hf is not None else step_h
+    nat_step = float(getattr(args, "nat_step_h", step_h) or step_h)
+    fwd_lift = float(getattr(args, "fwd_front_lift", 0.0) or 0.0)
+    amp_f = float(getattr(args, "amp_front", 0.0) or 0.0)
+    amp_r = float(getattr(args, "amp_rear", 0.0) or 0.0)
+    x_shift = float(getattr(args, "x_shift", 0.0) or 0.0)
+    com_m = float(getattr(args, "com_shift_m", 0.0) or 0.0)
+    hz = (1.0 / period) if period > 1e-9 else 0.0
+
+    print("[show] SoftTrot 开环摘要（预设 + CLI 生效值；不上电机）")
+    print(f"  步频     T={period:.3f} s   f={hz:.2f} Hz")
+    print(f"  占空比   stance={stance:.3f}   swing={1.0 - stance:.3f}")
+    print(
+        f"  步高     rear={step_h*1000:.1f} mm  front={step_hf*1000:.1f} mm  "
+        f"nat={nat_step*1000:.1f} mm  fwd_lift={fwd_lift*1000:.1f} mm"
+    )
+    print(
+        f"  步距     amp_front={amp_f*1000:.1f} mm  amp_rear={amp_r*1000:.1f} mm"
+        f"  （半步长；全步≈2×）"
+    )
+    print(
+        f"  质心     x_shift={x_shift*1000:+.1f} mm（前后）  "
+        f"com_shift={com_m*1000:+.1f} mm（左右）"
+    )
+    print(
+        f"  体高/柔顺 height={float(getattr(args, 'height', 0) or 0)*1000:.1f} mm  "
+        f"leg_kp_scale={float(getattr(args, 'leg_kp_scale', 1) or 1):.2f}"
+    )
+    print("[show] 完成。改参后可再跑: ./run_walk.sh --no-tail --show")
+
 
 def parse_args():
-    p = argparse.ArgumentParser(
-        description="Marsdog 稳定步态控制 (StableTrot)",
+    p = _WalkArgParser(
+        prog="walk.py",
+        description=(
+            "Marsdog SoftTrot 开环步态（默认 --help 只列常用调参；"
+            "IMU/WBC/转向等见 --help-all；--show 打印开环摘要）"
+        ),
+        usage=(
+            "%(prog)s [开环步态参数...] [选项]\n"
+            "       常用: --x-shift / --com-shift / --gait-period / --stance / "
+            "--height / --no-tail / --show\n"
+            "       开环清单: --help    全部参数: --help-all"
+        ),
         allow_abbrev=False,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # [兼容] 历史主循环归属开关。真实应用已迁入 src/marsdog_control/apps/walk.py,
     # 该参数暂时保留以避免旧脚本/文档调用失败；后续 RuntimePipeline 完全接管后移除。
@@ -172,7 +309,8 @@ def parse_args():
                    help="横向重心摆动幅度 (m), 半正弦旧法; SoftTrot 有 --com-shift 时忽略")
     p.add_argument("--com-shift", type=float, default=GAIT.com_shift_m,
                    dest="com_shift_m", metavar="M",
-                   help="[位控·质心] SoftTrot 横向移重 (m); NATURAL_SOFT_TROT 默认 0.012, 0=关; "
+                   help="[位控·质心] SoftTrot 横向移重 (m); "
+                        f"默认 {GAIT.com_shift_m}, 0=关; "
                         "正=FL+RR→右; --sim-parity 会关掉")
     p.add_argument("--com-shift-blend", type=float, default=GAIT.com_shift_blend,
                    dest="com_shift_blend", metavar="PHASE",
@@ -398,6 +536,18 @@ def parse_args():
                    help="[动力学] WBC 摆动足笛卡尔 PD kd")
     p.add_argument("--urdf-path", type=str, default=_DYN.urdf_path,
                    help="[动力学] Pinocchio URDF 路径")
+    p.add_argument(
+        "--help-all", action="store_true",
+        help="显示全部 CLI 参数（含 IMU/WBC/转向/台架等）",
+    )
+    p.add_argument(
+        "--show", action="store_true",
+        help="打印开环步态生效参数（步频/占空比/步高/步距/质心等）后退出，不上电机",
+    )
+    if "--help-all" in sys.argv[1:]:
+        p.print_help()
+        raise SystemExit(0)
+    _filter_help_to_open_loop(p)
     explicit_dests = set()
     for token in sys.argv[1:]:
         if token.startswith("--"):

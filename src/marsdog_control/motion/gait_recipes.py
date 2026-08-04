@@ -609,7 +609,8 @@ NATURAL_SOFT_TROT = {
     "tarsus_swing_deg": 0.0,
     "swing_clearance_per_rad": 0.35,
     # ── 横向唯一策略 ──
-    "com_shift_m": 0.012,
+    # 2026-08-04 真机：com_shift 12→4mm；x_shift 默认 0（见 gait_tuning）
+    "com_shift_m": 0.004,
     # 0.15：回绕与半周切换同为 2·blend，触地前完成移重（上限见 foot_trajectory）
     "com_shift_blend": 0.15,
     "rear_clearance_m": 0.0,

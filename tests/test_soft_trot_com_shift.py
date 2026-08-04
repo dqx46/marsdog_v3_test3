@@ -22,7 +22,7 @@ from marsdog_control.motion.gait_recipes import NATURAL_SOFT_TROT_WBC  # noqa: E
 class SoftTrotComShiftTest(unittest.TestCase):
     def test_recipe_defaults_impedance_overlays(self):
         # Minimal SoftTrot: com_shift only; conflicting overlays off.
-        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["com_shift_m"]), 0.012)
+        self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["com_shift_m"]), 0.004)
         self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["height"]), 0.25)
         self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["step_h"]), 0.024)
         self.assertAlmostEqual(float(NATURAL_SOFT_TROT_WBC["stance"]), 0.72)
