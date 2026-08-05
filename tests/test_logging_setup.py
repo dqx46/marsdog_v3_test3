@@ -13,7 +13,9 @@ for _p in (_ROOT, os.path.join(_ROOT, "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from marsdog_control.io.logging import LOG_HEADER, LogRuntime, setup_log  # noqa: E402
+from marsdog_control.io.logging import (  # noqa: E402
+    LOG_HEADER, WALK_RECORDER_CSV, WALK_RECORDER_META, LogRuntime, setup_log,
+)
 
 
 class SetupLogTest(unittest.TestCase):
@@ -37,11 +39,12 @@ class SetupLogTest(unittest.TestCase):
             self.assertIsNotNone(writer)
             fh.close()
 
+            self.assertEqual(os.path.basename(path), WALK_RECORDER_CSV)
             with open(path, newline="") as csv_file:
                 rows = list(csv.reader(csv_file))
             self.assertEqual(rows[0], LOG_HEADER)
 
-            meta_path = path.replace(".csv", ".meta.json")
+            meta_path = os.path.join(os.path.dirname(path), WALK_RECORDER_META)
             with open(meta_path, encoding="utf-8") as meta_file:
                 meta = json.load(meta_file)
             self.assertEqual(meta["explicit_cli"], ["foo"])

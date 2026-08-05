@@ -37,6 +37,7 @@ def apply_runtime_config_to_legacy_args(
     setattr(args, "yaw_hold", features.yaw_hold_enabled)
     setattr(args, "no_tail", not features.tail_enabled)
     setattr(args, "no_gamepad", not features.gamepad_enabled)
+    setattr(args, "log", bool(features.logging_enabled))
     setattr(args, "no_log", not features.logging_enabled)
     setattr(args, "dm_dq_feedforward", features.dm_dq_feedforward_enabled)
     setattr(args, "ff_decouple", features.ff_decouple_enabled)

@@ -37,7 +37,7 @@ class FeatureFlags:
     yaw_hold_enabled: bool = False
     tail_enabled: bool = True
     gamepad_enabled: bool = True
-    logging_enabled: bool = True
+    logging_enabled: bool = False
     dm_tarsus_active: bool = True
     dm_dq_feedforward_enabled: bool = False
     ff_decouple_enabled: bool = False

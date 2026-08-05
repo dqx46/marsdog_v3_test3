@@ -50,7 +50,7 @@ class UnitConversionTest(unittest.TestCase):
 
 class FeatureFlagTest(unittest.TestCase):
     def test_negative_switches_map_to_flags(self):
-        args = Namespace(no_imu=True, no_gamepad=True, no_tail=True, no_log=True,
+        args = Namespace(no_imu=True, no_gamepad=True, no_tail=True, log=False,
                          gravity_comp=False, var_impedance=True)
         cfg = runtime_config_from_args(args)
         self.assertFalse(cfg.features.imu_enabled)
@@ -59,6 +59,11 @@ class FeatureFlagTest(unittest.TestCase):
         self.assertFalse(cfg.features.logging_enabled)
         self.assertFalse(cfg.features.gravity_comp_enabled)
         self.assertTrue(cfg.features.variable_impedance_enabled)
+
+    def test_log_flag_enables_logging(self):
+        args = Namespace(log=True)
+        cfg = runtime_config_from_args(args)
+        self.assertTrue(cfg.features.logging_enabled)
 
 
 class LoaderOneWayTest(unittest.TestCase):

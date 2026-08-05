@@ -295,8 +295,30 @@ def bringup_motors_and_board(
             clock.sleep(0.05)
         clock.sleep(0.4)
     else:
-        # Hot-start: never re-enable (would clear MIT hold); holder already running.
-        print("[init] skip re-enable / settle（由保位线程维持刚度）")
+        # Hot-start: do not blanket-enable (would clear MIT hold on healthy motors).
+        # Only enable LZ responders that are not already in MIT (mode!=2).
+        fixed = []
+        for j in joint_map:
+            if j.mtype != "lz":
+                continue
+            idx = j.motor_id - 1
+            if not (0 <= idx < len(lz.mode)):
+                continue
+            if lz.rx_count[idx] <= 0 or lz.mode[idx] == 2:
+                continue
+            if lz.ensure_mit(j.motor_id, tag="init/hot"):
+                q = lz.get_position(j.motor_id)
+                lz.mit_control(j.motor_id, q, 0.0, 80.0, 4.0, 0.0)
+                fixed.append(j.motor_id)
+            else:
+                print(
+                    f"[init] WARNING LZ ID{j.motor_id} still "
+                    f"mode={lz.mode[idx]} after enable"
+                )
+        if fixed:
+            print(f"[init] hot-start re-enable mode!=2: {fixed}")
+        else:
+            print("[init] skip re-enable（LZ 均已 MIT mode=2；保位线程维持刚度）")
         clock.sleep(0.02)
 
     board = board_cls.from_existing(

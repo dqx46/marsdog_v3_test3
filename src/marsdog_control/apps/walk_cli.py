@@ -392,7 +392,11 @@ def parse_args():
     p.add_argument("--retract-rear", type=float, default=GAIT.retract_rear)
     p.add_argument("--tarsus-swing-deg", type=float, default=GAIT.tarsus_swing_deg)
     p.add_argument("--no-gamepad",  action="store_true")
-    p.add_argument("--no-log",      action="store_true")
+    p.add_argument(
+        "--log", action=argparse.BooleanOptionalAction, default=False,
+        help="写关节轨迹 CSV（默认关，省磁盘；开启后固定写 log/walk_recoder.csv；"
+             "--no-log 关闭）",
+    )
     p.add_argument("--scope", action="store_true",
                    help="启动日志软件示波器(独立进程读取CSV, 不进入控制环); 输出 log/scope_live.html")
     p.add_argument("--scope-window", type=float, default=6.0,

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Offline motor tracking plots from walk_log_*.csv (matplotlib).
+"""Offline motor tracking plots from walk CSV (matplotlib).
 
 Examples:
-    python3 plot_tracking_mpl.py --latest
-    python3 plot_tracking_mpl.py log/walk_log_20260716_100434.csv \\
-        --motors 1,2,3,4,5,6,7,8 --include-stand
-    python3 plot_tracking_mpl.py --latest --motors 3,7,4,8 --error
+    # 默认读 mocap_to_real/log/walk_recoder.csv
+    python3 -m marsdog_control.apps.tools.analysis.plot_tracking_mpl --error
+    python3 -m marsdog_control.apps.tools.analysis.plot_tracking_mpl \\
+        --motors 12,13,14 --include-stand --error
 """
 
 from __future__ import annotations
@@ -16,7 +16,12 @@ import math
 import sys
 from pathlib import Path
 
-DEFAULT_LOG_DIR = Path(__file__).resolve().parent / "log"
+from marsdog_control.io.logging import WALK_RECORDER_CSV
+
+# walk --log 写入 mocap_to_real/log/walk_recoder.csv
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+DEFAULT_LOG_DIR = _REPO_ROOT / "mocap_to_real" / "log"
+DEFAULT_LOG_NAME = WALK_RECORDER_CSV
 DEFAULT_MOTORS = (3, 7, 4, 8)
 
 
@@ -35,11 +40,22 @@ def finite(value) -> float:
     return out if math.isfinite(out) else float("nan")
 
 
-def latest_log(log_dir: Path) -> Path:
+def default_log(log_dir: Path) -> Path:
+    """Prefer fixed walk_recoder.csv; else newest legacy walk_log_*.csv."""
+    fixed = log_dir / DEFAULT_LOG_NAME
+    if fixed.is_file():
+        return fixed
     logs = sorted(log_dir.glob("walk_log_*.csv"), key=lambda p: p.stat().st_mtime)
-    if not logs:
-        raise FileNotFoundError(f"{log_dir} has no walk_log_*.csv")
-    return logs[-1]
+    if logs:
+        return logs[-1]
+    raise FileNotFoundError(
+        f"{log_dir} 无 {DEFAULT_LOG_NAME} 也无 walk_log_*.csv；"
+        f"请先 ./run_walk.sh --log"
+    )
+
+
+def latest_log(log_dir: Path) -> Path:
+    return default_log(log_dir)
 
 
 def load_series(path: Path, motors: tuple[int, ...], *, gait_only: bool,
@@ -269,9 +285,14 @@ def plot_tracking_svg(data, *, motors: tuple[int, ...], show_error: bool,
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="walk_log 跟随曲线 (matplotlib)")
-    ap.add_argument("log", nargs="?", help="walk_log_*.csv 路径")
-    ap.add_argument("--latest", action="store_true", help="使用 log/ 下最新 CSV")
+    ap = argparse.ArgumentParser(
+        description=f"walk 跟随曲线 (默认 {DEFAULT_LOG_NAME})")
+    ap.add_argument(
+        "log", nargs="?",
+        help=f"CSV 路径（默认 {DEFAULT_LOG_DIR / DEFAULT_LOG_NAME}）")
+    ap.add_argument(
+        "--latest", action="store_true",
+        help=f"同默认：优先 {DEFAULT_LOG_NAME}，否则最新 walk_log_*.csv")
     ap.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     ap.add_argument("--motors", type=parse_motors, default=DEFAULT_MOTORS,
                     help="逗号分隔电机 ID, 默认 3,7,4,8")
@@ -289,12 +310,11 @@ def main(argv=None) -> int:
                     help="auto=优先 matplotlib PNG, 否则 SVG; mpl=强制 matplotlib")
     args = ap.parse_args(argv)
 
-    if args.latest:
-        log_path = latest_log(args.log_dir)
-    elif args.log:
+    if args.log:
         log_path = Path(args.log).resolve()
     else:
-        ap.error("需要日志路径或 --latest")
+        # 无位置参数 / --latest：都走固定名（兼容旧 walk_log_*）
+        log_path = default_log(args.log_dir)
 
     if not log_path.is_file():
         raise SystemExit(f"找不到日志: {log_path}")

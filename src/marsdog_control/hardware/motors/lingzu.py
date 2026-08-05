@@ -467,6 +467,67 @@ class MotorLz:
             except Exception:
                 pass
 
+    def ensure_mit(self, motor_id, *, tag="MotorLz", wait_s=0.1) -> bool:
+        """Hot-start: if motor has feedback but mode!=2, enable once into MIT.
+
+        Safe to call after the recv thread is running (async mode update).
+        Returns True when motor is MIT and marked connected.
+        """
+        idx = motor_id - 1
+        if not (0 <= idx < len(self.mode)):
+            return False
+        if self.rx_count[idx] <= 0:
+            return False
+        if self.mode[idx] != 2:
+            print(
+                f"[{tag}] motor {motor_id} mode={self.mode[idx]} "
+                f"fault={self.fault[idx]} → enable (hot-start)"
+            )
+            self.enable(motor_id)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < wait_s:
+                if self.mode[idx] == 2:
+                    break
+                time.sleep(0.005)
+        if self.mode[idx] != 2:
+            return False
+        self.is_connected[idx] = True
+        self._calc_pos_offset(motor_id)
+        return True
+
+    def _hot_start_claim(self, mid, *, bus_tag, read_once, wait_s=0.08) -> bool:
+        """After a probe reply: enable if mode!=2, then MIT-hold if in MIT."""
+        idx = mid - 1
+        if self.rx_count[idx] <= 0:
+            return False
+        if self.mode[idx] != 2:
+            print(
+                f"[MotorLz] {bus_tag} motor {mid} mode={self.mode[idx]} "
+                f"fault={self.fault[idx]} → enable (hot-start)"
+            )
+            self.enable(mid)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < wait_s:
+                result = read_once()
+                if result is None:
+                    continue
+                can_id, _dlc, data = result
+                if not (can_id & CAN_EFF_FLAG):
+                    continue
+                eid = can_id & 0x1FFFFFFF
+                rmid = (eid >> 8) & 0xFF
+                if rmid == mid:
+                    self._parse_feedback(mid, eid, data)
+                    if self.mode[idx] == 2:
+                        break
+        if self.mode[idx] != 2:
+            return False
+        self.is_connected[idx] = True
+        self._calc_pos_offset(mid)
+        q = self.get_position(mid)
+        self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
+        return True
+
     def _start_init_hold(self) -> None:
         """200Hz hold while sequential enable probes later motors on this bus."""
         if self._init_hold_thread is not None and self._init_hold_thread.is_alive():
@@ -534,14 +595,24 @@ class MotorLz:
                 if rmid == mid:
                     self._parse_feedback(mid, eid, data)
                     break
-            # Hot-start: freeze pose immediately — do not wait for other buses.
-            idx = mid - 1
-            if (not clear_fault) and self.rx_count[idx] > 0 and self.mode[idx] == 2:
-                self.is_connected[idx] = True
-                self._calc_pos_offset(mid)
-                q = self.get_position(mid)
-                self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
+            # Hot-start: if mode!=2, enable once; then freeze pose immediately.
+            if not clear_fault:
+                def _read_serial():
+                    with self._serial_lock:
+                        return self._serial.read_msg()
+
+                self._hot_start_claim(
+                    mid, bus_tag="serial", read_once=_read_serial)
             time.sleep(0.002)
+
+        self._start_recv_thread()
+        if not clear_fault:
+            # Second chance after recv thread: still-not-MIT responders.
+            for mid in RS05_SERIAL_IDS:
+                if self.rx_count[mid - 1] > 0 and self.mode[mid - 1] != 2:
+                    if self.ensure_mit(mid, tag="MotorLz/serial"):
+                        q = self.get_position(mid)
+                        self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
 
         # Verify and compute multi-turn offsets
         for mid in RS05_SERIAL_IDS:
@@ -554,7 +625,6 @@ class MotorLz:
                       f"(mode={self.mode[idx]} fault={self.fault[idx]} "
                       f"rx={self.rx_count[idx]})")
 
-        self._start_recv_thread()
         if not clear_fault:
             self.hold_connected()
             self._stop_init_hold()
@@ -653,13 +723,22 @@ class MotorLz:
                 if rmid == mid:
                     self._parse_feedback(mid, eid, data)
                     break
-            idx = mid - 1
-            if (not clear_fault) and self.rx_count[idx] > 0 and self.mode[idx] == 2:
-                self.is_connected[idx] = True
-                self._calc_pos_offset(mid)
-                q = self.get_position(mid)
-                self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
+            if not clear_fault:
+                def _read_can1():
+                    with self._can1_lock:
+                        return self._can1_serial.read_msg()
+
+                self._hot_start_claim(
+                    mid, bus_tag="CAN1-serial", read_once=_read_can1)
             time.sleep(0.002)
+
+        self._start_recv_thread()
+        if not clear_fault:
+            for mid in RS05_CAN_IDS:
+                if self.rx_count[mid - 1] > 0 and self.mode[mid - 1] != 2:
+                    if self.ensure_mit(mid, tag="MotorLz/CAN1"):
+                        q = self.get_position(mid)
+                        self.mit_control(mid, q, 0.0, 80.0, 4.0, 0.0)
 
         for mid in RS05_CAN_IDS:
             idx = mid - 1
@@ -671,7 +750,6 @@ class MotorLz:
                       f"(mode={self.mode[idx]} fault={self.fault[idx]} "
                       f"rx={self.rx_count[idx]})")
 
-        self._start_recv_thread()
         if not clear_fault:
             self.hold_connected()
             self._stop_init_hold()

@@ -80,16 +80,20 @@ LOG_HEADER = [
 ]
 
 
+# 固定文件名（每次 --log 覆盖），避免 walk_log_时间戳 堆满磁盘。
+WALK_RECORDER_CSV = "walk_recoder.csv"
+WALK_RECORDER_META = "walk_recoder.meta.json"
+
+
 def setup_log(enabled: bool, args=None, *, base_dir: str,
               runtime: Optional[LogRuntime] = None):
     if not enabled:
         return None, None, None
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = os.path.join(base_dir, "log")
     os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, f"walk_log_{ts}.csv")
+    path = os.path.join(log_dir, WALK_RECORDER_CSV)
     if args is not None:
-        meta_path = os.path.join(log_dir, f"walk_log_{ts}.meta.json")
+        meta_path = os.path.join(log_dir, WALK_RECORDER_META)
         dm = {}
         if runtime is not None:
             dm = {
@@ -118,7 +122,7 @@ def setup_log(enabled: bool, args=None, *, base_dir: str,
     f = open(path, "w", newline="")
     w = csv.writer(f)
     w.writerow(LOG_HEADER)
-    print(f"[log] CSV: log/{os.path.basename(path)}")
+    print(f"[log] CSV: log/{os.path.basename(path)}  (每次 --log 覆盖)")
     print(f"[log] 路径: {path}")
     return f, w, path
 
@@ -353,4 +357,12 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
         ])
 
 
-__all__ = ["LOG_HEADER", "LogRuntime", "WriteLogRuntime", "setup_log", "write_log"]
+__all__ = [
+    "LOG_HEADER",
+    "WALK_RECORDER_CSV",
+    "WALK_RECORDER_META",
+    "LogRuntime",
+    "WriteLogRuntime",
+    "setup_log",
+    "write_log",
+]

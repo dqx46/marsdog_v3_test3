@@ -37,9 +37,15 @@ def finite(value: str | None) -> float:
 
 
 def latest_log(log_dir: Path) -> Path:
+    from marsdog_control.io.logging import WALK_RECORDER_CSV
+
+    fixed = log_dir / WALK_RECORDER_CSV
+    if fixed.is_file():
+        return fixed
     logs = sorted(log_dir.glob("walk_log_*.csv"), key=lambda p: p.stat().st_mtime)
     if not logs:
-        raise FileNotFoundError(f"{log_dir} has no walk_log_*.csv")
+        raise FileNotFoundError(
+            f"{log_dir} 无 {WALK_RECORDER_CSV} 也无 walk_log_*.csv")
     return logs[-1]
 
 

@@ -33,7 +33,7 @@ _SCHEMA_DEFAULTS = [
     ("features", "variable_impedance_enabled", False),
     ("features", "tail_enabled", True),
     ("features", "gamepad_enabled", True),
-    ("features", "logging_enabled", True),
+    ("features", "logging_enabled", False),
     ("features", "dm_tarsus_active", True),
     ("features", "dm_dq_feedforward_enabled", False),
     ("features", "ff_decouple_enabled", False),

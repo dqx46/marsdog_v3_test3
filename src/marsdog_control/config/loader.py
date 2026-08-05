@@ -64,7 +64,12 @@ def runtime_config_from_args(args: Namespace) -> RuntimeConfig:
         yaw_hold_enabled=bool(_get(args, "yaw_hold", _CLI.yaw_hold)),
         tail_enabled=not bool(_get(args, "no_tail", False)),
         gamepad_enabled=not bool(_get(args, "no_gamepad", False)),
-        logging_enabled=not bool(_get(args, "no_log", False)),
+        # 默认不记日志；--log 开启。兼容旧 Namespace.no_log。
+        logging_enabled=(
+            bool(_get(args, "log", False))
+            if hasattr(args, "log")
+            else (not bool(_get(args, "no_log", True)))
+        ),
         dm_tarsus_active=dm_active,
         dm_dq_feedforward_enabled=bool(_get(
             args, "dm_dq_feedforward", _CLI.dm_dq_feedforward)),
