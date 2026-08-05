@@ -1,9 +1,4 @@
-# [解耦] 真实实现已从 mocap_to_real 下沉到此 src 模块; 保持与旧代码逐字一致的扁平
-# import, 由 ensure_legacy_path() 保证 mocap_to_real 在 sys.path 上可解析(其 compat
-# 别名回指本 src 包, 单一模块实体, 不产生第二份副本)。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
-_ensure_legacy_path()
-
+"""Kinematics — package-local imports (no legacy sys.path)."""
 import math
 from marsdog_control.config.joints import JOINT_MAP, JOINT_BY_NAME as JBN
 

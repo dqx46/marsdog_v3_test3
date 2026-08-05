@@ -12,7 +12,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Optional, Protocol
 
-from marsdog_control.compat import ensure_legacy_path
 from marsdog_control.config.devices import DeviceConfig, get_device_config
 from marsdog_control.config.joints import (
     DM_CAN_IDS,
@@ -67,7 +66,6 @@ class RkMotorBoard:
         return board
 
     def start(self) -> None:
-        ensure_legacy_path()
         from marsdog_control.hardware.motors.damiao import MotorDamiao
         from marsdog_control.hardware.motors.evo import MotorEvo
         from marsdog_control.hardware.motors.lingzu import MotorLz
@@ -254,8 +252,10 @@ class RkMotorBoard:
                      clock=None) -> bool:
         """Ramp gains to zero over ``duration_s`` wall-clock seconds.
 
-        ``kp`` starts at 10 and falls linearly to 0. Alpha follows wall time so
-        a slow bus cannot stretch the fade past the requested duration.
+        All MIT brands (LZ / EVO / IncOS) and DM share the same linear fade so
+        soft-disable never leaves a brand holding non-zero stiffness. Alpha
+        follows wall time so a slow bus cannot stretch the fade past the
+        requested duration.
         """
         from marsdog_control.config.joints import DEFAULT_DM_KD, DEFAULT_DM_KP
 
@@ -279,6 +279,7 @@ class RkMotorBoard:
                 use_joint_gains=False,
                 kp_lz=kp, kd_lz=kd,
                 kp_evo=kp, kd_evo=kd,
+                kp_incos=kp, kd_incos=kd,
                 kp_dm=dm_kp_base * (1.0 - alpha),
                 kd_dm=dm_kd_base * (1.0 - alpha),
             )

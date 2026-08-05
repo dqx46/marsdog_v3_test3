@@ -147,12 +147,21 @@ def test_jump_wbc_gains_wired_from_recipe_not_global_dynamics():
     finally:
         sys.argv = old
 
+    from marsdog_control.config.jump_recipe import JumpRecipe
+    from marsdog_control.config.stack_build import GaitStackConfig
+    from marsdog_control.motion.gait_params import SoftTrotBuild
+
+    cfg = GaitStackConfig.from_args(args)
+    soft = SoftTrotBuild.from_gait_stack(
+        cfg, x_offset_front=0.17, x_offset_rear=-0.17,
+        hip_abduction=float(cfg.hip_abd),
+    )
     ctrls = build_controller_set(
-        args,
+        cfg,
         front_x0=0.17,
         rear_x0=-0.17,
-        jump_params=dict(JUMP_WBC),
-        natural_params=dict(NATURAL_SOFT_TROT_WBC),
+        soft_build=soft,
+        jump_recipe=JumpRecipe().with_overrides(JUMP_WBC),
         apply_turn=False,
     )
     assert abs(ctrls.jump_fwd.kp_base_z - JUMP_WBC["kp_base_z"]) < 1e-9

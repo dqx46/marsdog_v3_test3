@@ -175,6 +175,10 @@ class WalkLoopContext:
     abd_flare_rad: float = 0.16  # ~9.2°；应明显外开且仍在软限位内
     clock: Optional[ClockLike] = None
     backend: Optional[RobotBackend] = None
+    # Physical-quantity ownership (from WalkSessionConfig.policies; required).
+    policies: Optional[object] = None
+    # Shared lateral CoM gate (Spot elevates to LateralOwner.SPOT).
+    lateral_planner: Optional[object] = None
 
     # exit flags
     estopped_fall: bool = False
@@ -288,6 +292,9 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         ctx.dm_tarsus_active = ctx.fsm.dm_active()
     rt.dm.active = ctx.dm_tarsus_active
     active_trot = ctx.fsm.active_gait
+    # Lateral ownership: Spot elevates to SPOT; Walk/Pace → SWAY override.
+    if ctx.lateral_planner is not None:
+        ctx.lateral_planner.sync_from_gait(active_trot)
     # 走路时强制收回外展验证，避免与 SoftTrot 髋外展叠加
     if ctx.abd_flare_active and active_trot is not None:
         clear_abd_flare(ctx, reason="进入步态")
@@ -340,9 +347,10 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
         except Exception:
             pass
 
-    # WBC 负责姿态/力：关掉 IMU 足高修正，避免双环抢控制
-    if getattr(ctx.executor.config, "wbc_enabled", False) and getattr(
-        ctx.executor.config, "disable_imu_foot_balance", True
+    # Attitude ownership: IMU foot-height only when AttitudeOwner.IMU.
+    # Assembly always wires policies; missing → fail closed (no IMU patch).
+    if ctx.policies is None or not bool(
+        getattr(ctx.policies, "apply_imu_foot_balance", False)
     ):
         imu_dz = {"fl": 0.0, "fr": 0.0, "rl": 0.0, "rr": 0.0}
     # 姿势保持：目标已是捕获关节角，禁止 IMU 足高再改（防 hold 首帧抽一下）

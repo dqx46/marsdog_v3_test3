@@ -11,12 +11,29 @@ for _p in (_ROOT, os.path.join(_ROOT, "src")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from marsdog_control.config.control_policies import (  # noqa: E402
+    AttitudeOwner,
+    LateralOwner,
+)
+from marsdog_control.motion.attitude_overlay import (  # noqa: E402
+    AttitudeOverlayGate,
+    bind_ownership,
+)
 from marsdog_control.motion.foot_trajectory import (  # noqa: E402
     lateral_offset_soft_trot_com,
     lateral_offset_trot,
 )
 from marsdog_control.motion.gait_controller import NaturalSoftTrot  # noqa: E402
 from marsdog_control.motion.gait_recipes import NATURAL_SOFT_TROT_WBC  # noqa: E402
+from marsdog_control.motion.lateral_planner import LateralPlanner  # noqa: E402
+
+
+def _bind(gait, lateral: LateralOwner):
+    bind_ownership(
+        lateral_planner=LateralPlanner(session_owner=lateral),
+        attitude_gate=AttitudeOverlayGate(attitude=AttitudeOwner.NONE),
+        gaits=[gait],
+    )
 
 
 class SoftTrotComShiftTest(unittest.TestCase):
@@ -43,9 +60,10 @@ class SoftTrotComShiftTest(unittest.TestCase):
         sway = 0.012
         g = NaturalSoftTrot(
             period=1.0, stance_ratio=0.56,
-            lateral_sway=0.0025,  # must be ignored when com_shift_m > 0
+            lateral_sway=0.0025,  # must be ignored when owner is COM_SHIFT
             com_shift_m=sway, com_shift_blend=0.12,
         )
+        _bind(g, LateralOwner.COM_SHIFT)
         t_mid = 0.25  # FL+RR half → −Y after polarity flip
         got = g._lateral_offset(t_mid)
         self.assertAlmostEqual(got, -sway)
@@ -54,11 +72,21 @@ class SoftTrotComShiftTest(unittest.TestCase):
         self.assertNotAlmostEqual(
             got, lateral_offset_trot(t_mid, 1.0, 0.56, 0.0025))
 
-    def test_com_shift_zero_falls_back_to_lateral_sway(self):
+    def test_com_shift_zero_under_com_shift_owner_is_zero(self):
+        """No dual fallback: COM_SHIFT + com_shift_m=0 → 0 (not sway)."""
         g = NaturalSoftTrot(
             period=1.0, stance_ratio=0.56,
             lateral_sway=0.008, com_shift_m=0.0,
         )
+        _bind(g, LateralOwner.COM_SHIFT)
+        self.assertEqual(g._lateral_offset(0.28), 0.0)
+
+    def test_sway_owner_uses_lateral_sway(self):
+        g = NaturalSoftTrot(
+            period=1.0, stance_ratio=0.56,
+            lateral_sway=0.008, com_shift_m=0.0,
+        )
+        _bind(g, LateralOwner.SWAY)
         t = 0.28
         self.assertAlmostEqual(
             g._lateral_offset(t),
@@ -68,6 +96,8 @@ class SoftTrotComShiftTest(unittest.TestCase):
     def test_negative_com_shift_flips_sign(self):
         g_pos = NaturalSoftTrot(period=1.0, com_shift_m=0.012)
         g_neg = NaturalSoftTrot(period=1.0, com_shift_m=-0.012)
+        _bind(g_pos, LateralOwner.COM_SHIFT)
+        _bind(g_neg, LateralOwner.COM_SHIFT)
         t = 0.25  # FL+RR: pos→−Y, neg→+Y
         self.assertAlmostEqual(g_pos._lateral_offset(t), -0.012)
         self.assertAlmostEqual(g_neg._lateral_offset(t), 0.012)

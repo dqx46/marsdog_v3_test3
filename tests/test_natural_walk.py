@@ -74,6 +74,14 @@ def test_walk_uses_linear_stance_not_soft_mj():
 
 def test_walk_sway_holds_before_left_lift():
     """At RL lift (phase≈0) CoM already on right (negative)."""
+    from marsdog_control.config.control_policies import (
+        AttitudeOwner, LateralOwner,
+    )
+    from marsdog_control.motion.attitude_overlay import (
+        AttitudeOverlayGate, bind_ownership,
+    )
+    from marsdog_control.motion.lateral_planner import LateralPlanner
+
     assert walk_weight_shift_sign(0.0) < 0.0
     assert walk_weight_shift_sign(0.20) < 0.0
     assert walk_weight_shift_sign(0.70) > 0.0
@@ -82,6 +90,11 @@ def test_walk_sway_holds_before_left_lift():
     walk = NaturalWalk(
         amp_front=0.054, amp_rear=0.062, step_height=0.036,
         period=period, stance_ratio=0.73, lateral_sway=sway, com_sway_m=0.026,
+    )
+    bind_ownership(
+        lateral_planner=LateralPlanner(session_owner=LateralOwner.COM_SHIFT),
+        attitude_gate=AttitudeOverlayGate(attitude=AttitudeOwner.NONE),
+        gaits=[walk],
     )
     assert walk.get_com_y_shift(0.0) < 0.0
     assert walk.get_com_y_shift(0.7 * period) > 0.0

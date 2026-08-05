@@ -100,6 +100,7 @@ def dispatch_batches(lz, evo, dm, incos, batches):
 def send_all(lz, evo, dm, incos, targets, rt, kp_scale=1.0, use_joint_gains=True,
              kp_lz=DEFAULT_LZ_KP, kd_lz=DEFAULT_LZ_KD,
              kp_evo=DEFAULT_EVO_KP, kd_evo=DEFAULT_EVO_KD,
+             kp_incos=None, kd_incos=None,
              kp_dm=None, kd_dm=None,
              velocities=None, kp_phase=None, trq_ff=None,
              dm_reference_lead_active=False):
@@ -108,6 +109,7 @@ def send_all(lz, evo, dm, incos, targets, rt, kp_scale=1.0, use_joint_gains=True
         targets, rt,
         kp_scale=kp_scale, use_joint_gains=use_joint_gains,
         kp_lz=kp_lz, kd_lz=kd_lz, kp_evo=kp_evo, kd_evo=kd_evo,
+        kp_incos=kp_incos, kd_incos=kd_incos,
         kp_dm=kp_dm, kd_dm=kd_dm,
         velocities=velocities, kp_phase=kp_phase, trq_ff=trq_ff,
         dm_reference_lead_active=dm_reference_lead_active)

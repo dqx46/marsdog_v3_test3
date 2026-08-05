@@ -22,8 +22,8 @@ from marsdog_control.config.loader import runtime_config_from_args  # noqa: E402
 from marsdog_control.config.schema import RuntimeConfig  # noqa: E402
 from marsdog_control.core.units import deg_to_rad, mm_to_m, ms_to_s  # noqa: E402
 
-# Schema field expectations (authoritative numbers live in schema.py).
-# SoftTrot-aligned defaults: lead/predict/dq_ff off; geometry matches NATURAL_SOFT_TROT.
+# Schema field expectations. Soft geometry must match SoftTrotRecipe
+# (enforced cross-assert in test_gait_tuning_sync); other knobs live in schema.py.
 _SCHEMA_DEFAULTS = [
     ("features", "imu_enabled", False),
     ("features", "imu_feedback_enabled", False),
@@ -54,7 +54,7 @@ _SCHEMA_DEFAULTS = [
     ("control", "swing_kp_scale", 0.7),
     ("control", "td_window_s", 0.15),
     ("control", "gravity_scale", 1.0),
-    ("control", "max_correction_m", mm_to_m(20.0)),
+    ("control", "max_correction_m", mm_to_m(14.0)),
     ("control", "imu_slew_m_s", mm_to_m(0.0)),
     ("control", "yaw_hold_kp", 0.03),
     ("control", "yaw_hold_kd", 0.010),
@@ -64,7 +64,7 @@ _SCHEMA_DEFAULTS = [
     ("imu", "gyro_max_age_s", ms_to_s(30.0)),
     ("imu", "angle_tau_s", ms_to_s(25.0)),
     ("imu", "gyro_tau_s", ms_to_s(15.0)),
-    ("imu", "kp", 0.05),
+    ("imu", "kp", 0.040),
     ("imu", "softstart_s", 0.0),
     ("imu", "auto_trim_rate_m_rad_s", 0.08),
     ("imu", "auto_trim_limit_m", mm_to_m(12.0)),
@@ -99,7 +99,7 @@ class SchemaDefaultsTest(unittest.TestCase):
     def test_cli_helper_mirrors_schema(self):
         self.assertAlmostEqual(CLI.height, 0.25)
         self.assertAlmostEqual(CLI.dm_kp_fl, 220.0)
-        self.assertAlmostEqual(CLI.max_corr_mm, 20.0)
+        self.assertAlmostEqual(CLI.max_corr_mm, 14.0)
         self.assertAlmostEqual(CLI.tarsus_lead_fl_ms, 0.0)
         self.assertTrue(CLI.natural_soft_trot)
         self.assertTrue(CLI.gravity_comp)

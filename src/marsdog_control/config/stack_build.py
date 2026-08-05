@@ -5,16 +5,21 @@ IMU factories consume these frozen dataclasses instead of digging into ``args``
 field-by-field. Hot-path code (``RuntimeStateMachine``) never sees a Namespace.
 
 Gait-only argparse fallbacks come from ``config.gait_tuning.GAIT`` (shared with
-``walk_cli``). SoftTrot shape is applied via ``NATURAL_SOFT_TROT`` before
-``from_args``.
+``walk_cli``). SoftTrot shape is applied via ``SoftTrotRecipe`` /
+``NATURAL_SOFT_TROT`` before ``from_args``. Amp defaults follow SoftTrotRecipe.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from marsdog_control.config.gait_tuning import GAIT
+from marsdog_control.config.soft_trot_recipe import SOFT_TROT_RECIPE as _SOFT
+
+if TYPE_CHECKING:
+    from marsdog_control.config.control_policies import ControlPolicies
+    from marsdog_control.config.schema import RuntimeConfig
 
 
 def _g(args: Any, name: str, default):
@@ -42,8 +47,8 @@ class FsmDriveConfig:
     yaw_hold_limit: float = 0.5  # stick-scale clamp for yaw-hold output
     cruise_turn_scale: float = 0.6
     cruise_turn_yamp: float = 1.0
-    amp_front: float = 0.026
-    amp_rear: float = 0.026
+    amp_front: float = _SOFT.amp_front
+    amp_rear: float = _SOFT.amp_rear
     bwd_amp_scale: float = 0.7
     turn_sign: float = 1.0
 
@@ -78,8 +83,8 @@ class FsmDriveConfig:
                 args, "cruise_turn_scale", GAIT.cruise_turn_scale)),
             cruise_turn_yamp=float(_g(
                 args, "cruise_turn_yamp", GAIT.cruise_turn_yamp)),
-            amp_front=float(_g(args, "amp_front", 0.026)),
-            amp_rear=float(_g(args, "amp_rear", 0.026)),
+            amp_front=float(_g(args, "amp_front", _SOFT.amp_front)),
+            amp_rear=float(_g(args, "amp_rear", _SOFT.amp_rear)),
             bwd_amp_scale=float(_g(args, "bwd_amp_scale", GAIT.bwd_amp_scale)),
             turn_sign=float(_g(args, "turn_sign", GAIT.turn_sign)),
         )
@@ -153,6 +158,58 @@ class GaitStackConfig:
     turn_smooth: float
     turn_waist_yaw: float
     waist_yaw_turn_sign: float
+    # Per-controller flags (formerly module globals on gait_controller).
+    swing_level: float = 0.0
+    smooth_gait: bool = False
+    # Soft extras snapshotted so SoftTrotBuild does not getattr-hunt.
+    com_shift_m: float = 0.0
+    com_shift_blend: float = 0.15
+    rear_clearance_m: float = 0.0
+
+    def shared_gait_params(
+        self,
+        *,
+        x_offset_front: float,
+        x_offset_rear: float,
+        hip_abduction: Optional[float] = None,
+        **overrides: Any,
+    ):
+        """One ``GaitParams`` for StableTrot / Soft shared geometry."""
+        from marsdog_control.motion.gait_params import GaitParams
+        return GaitParams(
+            body_height=self.height,
+            stance_ratio=self.stance,
+            ramp_duration=self.ramp,
+            reactive_kp=self.reactive_kp,
+            reactive_kd=self.reactive_kd,
+            lateral_sway=self.lateral_sway,
+            front_thrust_gain=self.front_thrust_gain,
+            front_thrust_swing_gain=self.front_thrust_swing_gain,
+            front_tarsus_push=self.front_tarsus_push,
+            front_foot_track_deg=self.front_foot_track_deg,
+            front_foot_stance_push_deg=self.front_foot_stance_push_deg,
+            front_foot_swing_track=self.front_foot_swing_track,
+            front_stand_tarsus_deg=self.front_stand_tarsus_deg,
+            front_stand_foot_pitch_deg=self.front_stand_foot_pitch_deg,
+            swing_clearance_per_rad=self.swing_clearance_per_rad,
+            x_offset_front=x_offset_front,
+            x_offset_rear=x_offset_rear,
+            anti_roll=self.anti_roll,
+            trot_roll_ff_neg_deg=self.trot_roll_ff_neg_deg,
+            trot_roll_ff_pos_deg=self.trot_roll_ff_pos_deg,
+            anti_roll_asym_neg=self.anti_roll_asym_neg,
+            anti_roll_asym_pos=self.anti_roll_asym_pos,
+            hip_abduction=(
+                self.hip_abd if hip_abduction is None else float(hip_abduction)),
+            swing_level=self.swing_level,
+            smooth_gait=self.smooth_gait,
+            amp_front=self.amp_front,
+            amp_rear=self.amp_rear,
+            step_height=self.step_h,
+            step_height_front=(
+                self.step_h_front if self.step_h_front else self.step_h * 0.75),
+            period=self.period,
+        ).with_overrides(**overrides)
 
     @classmethod
     def from_args(cls, args: Any) -> "GaitStackConfig":
@@ -245,6 +302,16 @@ class GaitStackConfig:
             turn_waist_yaw=float(_g(args, "turn_waist_yaw", GAIT.turn_waist_yaw)),
             waist_yaw_turn_sign=float(_g(
                 args, "waist_yaw_turn_sign", GAIT.waist_yaw_turn_sign)),
+            swing_level=max(0.0, min(1.0, float(_g(
+                args, "swing_level", GAIT.swing_level)))),
+            smooth_gait=bool(
+                _g(args, "smooth_gait", False)
+                or _g(args, "smooth_gait_enabled", False)),
+            com_shift_m=float(_g(args, "com_shift_m", GAIT.com_shift_m)),
+            com_shift_blend=float(_g(
+                args, "com_shift_blend", GAIT.com_shift_blend)),
+            rear_clearance_m=float(_g(
+                args, "rear_clearance_m", GAIT.rear_clearance_m)),
         )
 
 
@@ -301,8 +368,69 @@ class ImuBuildConfig:
         )
 
 
+@dataclass(frozen=True)
+class WalkBuildConfig:
+    """One-shot typed stack snapshot: gait + teleop drive + IMU build.
+
+    Built at the CLI boundary (``prepare_walk_startup``) after Soft pour /
+    ``RuntimeConfig`` bootstrap. Downstream factories must not dig Namespace.
+    """
+
+    gait: GaitStackConfig
+    drive: FsmDriveConfig
+    imu: ImuBuildConfig
+
+    @classmethod
+    def from_args(
+        cls,
+        args: Any,
+        *,
+        gp_trot_threshold: float = 0.15,
+        gp_deadzone: float = 0.12,
+        runtime: Any = None,
+    ) -> "WalkBuildConfig":
+        from dataclasses import replace as _replace
+
+        gait = GaitStackConfig.from_args(args)
+        if runtime is not None:
+            features = getattr(runtime, "features", None)
+            if features is not None and bool(
+                getattr(features, "smooth_gait_enabled", False)
+            ):
+                gait = _replace(gait, smooth_gait=True)
+        return cls(
+            gait=gait,
+            drive=FsmDriveConfig.from_args(
+                args,
+                gp_trot_threshold=gp_trot_threshold,
+                gp_deadzone=gp_deadzone,
+            ),
+            imu=ImuBuildConfig.from_args(args),
+        )
+
+
+@dataclass(frozen=True)
+class WalkSessionConfig:
+    """Locked dual-tree startup contract.
+
+    * ``runtime`` — features / dynamics / schema IMU / safety (``RuntimeConfig``)
+    * ``build`` — gait stack / teleop drive / IMU PID build (``WalkBuildConfig``)
+    * ``policies`` — physical-quantity ownership (attitude / lateral / force)
+
+    Assembled exactly once in ``prepare_walk_startup`` after Soft pour.
+    Downstream must consume this (or ``.runtime`` / ``.build``); never re-run
+    ``from_args`` on a Namespace.
+    """
+
+    runtime: "RuntimeConfig"
+    build: WalkBuildConfig
+    policies: "ControlPolicies"
+
+
 __all__ = [
     "FsmDriveConfig",
     "GaitStackConfig",
     "ImuBuildConfig",
+    "WalkBuildConfig",
+    "WalkSessionConfig",
 ]

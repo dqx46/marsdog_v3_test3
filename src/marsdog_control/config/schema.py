@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from marsdog_control.config.devices import DeviceConfig, get_device_config
+from marsdog_control.config.soft_trot_recipe import SOFT_TROT_RECIPE as _SOFT
 from marsdog_control.core.units import deg_to_rad
 
 
@@ -52,14 +53,14 @@ class HardwareConfig:
 
 @dataclass(frozen=True)
 class GaitConfig:
-    body_height_m: float = 0.25
-    # SoftTrot SSOT (NATURAL_SOFT_TROT): 2026-08-03 lock D
-    period_s: float = 1.05
-    step_height_m: float = 0.024
-    front_step_height_m: Optional[float] = 0.020
-    amp_front_m: float = 0.022
-    amp_rear_m: float = 0.030
-    stance_ratio: float = 0.72
+    # SoftTrot SSOT → SoftTrotRecipe (config/soft_trot_recipe.py)
+    body_height_m: float = _SOFT.height
+    period_s: float = _SOFT.period
+    step_height_m: float = _SOFT.step_h
+    front_step_height_m: Optional[float] = _SOFT.step_h_front
+    amp_front_m: float = _SOFT.amp_front
+    amp_rear_m: float = _SOFT.amp_rear
+    stance_ratio: float = _SOFT.stance
     hip_abduction_rad: float = 0.08
     ramp_s: float = 3.5
     fade_s: float = 3.0
@@ -69,15 +70,16 @@ class GaitConfig:
 
 @dataclass(frozen=True)
 class ControlConfig:
-    # SoftTrot real default 0.90 (lock D): slight compliance vs raw JOINT_GAINS.
+    # Soft ImpedanceAssist default (orthogonal to ForceMode τ_ff ownership).
     # Jump / spot may still override transiently; brand tables stay at native units.
-    leg_kp_scale: float = 0.90
+    leg_kp_scale: float = _SOFT.leg_kp_scale
     kp_scale: float = 1.0
     td_kp_scale: float = 0.4
     swing_kp_scale: float = 0.7
     td_window_s: float = 0.15
     gravity_scale: float = 1.0
-    max_correction_m: float = 0.020
+    # Soft-era default was Soft pour max_corr_mm=14; Soft no longer pours IMU.
+    max_correction_m: float = 0.014
     imu_slew_m_s: float = 0.0
     yaw_hold_kp: float = 0.03
     yaw_hold_kd: float = 0.010
@@ -130,7 +132,8 @@ class ImuConfig:
     dynamic_predict_enabled: bool = False
     angle_tau_s: float = 0.025
     gyro_tau_s: float = 0.015
-    kp: float = 0.05
+    # Soft-era default was Soft pour imu_kp=0.040; Soft no longer pours IMU.
+    kp: float = 0.040
     softstart_s: float = 0.0
     roll_trim_m: float = 0.0
     pitch_trim_m: float = 0.0

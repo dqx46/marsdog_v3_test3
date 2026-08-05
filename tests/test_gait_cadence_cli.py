@@ -13,6 +13,7 @@ from marsdog_control.apps.walk_cli import (
 )
 from marsdog_control.config.stack_build import FsmDriveConfig, GaitStackConfig
 from marsdog_control.core.types import RobotMode, RobotState
+from marsdog_control.motion.gait_params import SoftTrotBuild
 from marsdog_control.motion.gait_recipes import (
     NATURAL_SOFT_TROT_WBC,
     build_controller_set,
@@ -22,18 +23,21 @@ from marsdog_control.runtime.fsm import RuntimeStateMachine
 
 
 def _trace_soft_trot(argv_extra):
-    """Parse → preset → stack → nat_fwd → SoftTrotSchedule (no hardware)."""
+    """Parse → preset → stack → SoftTrotBuild → SoftTrotSchedule (no hardware)."""
     argv = ["walk", "--natural-soft-trot", "--no-gamepad", "--no-tail", *argv_extra]
     with mock.patch.object(sys, "argv", argv):
         args = parse_args()
     recipe = dict(NATURAL_SOFT_TROT_WBC)
     apply_preset_preserving_cli(args, recipe)
     cfg = GaitStackConfig.from_args(args)
+    soft_build = SoftTrotBuild.from_gait_stack(
+        cfg, x_offset_front=0.0, x_offset_rear=0.0, hip_abduction=float(cfg.hip_abd),
+    )
     controllers = build_controller_set(
         cfg,
         front_x0=0.0,
         rear_x0=0.0,
-        natural_params=recipe,
+        soft_build=soft_build,
     )
     drive = FsmDriveConfig.from_args(args)
     fsm = RuntimeStateMachine(
@@ -128,28 +132,30 @@ class TestGaitCadenceCli(unittest.TestCase):
         self.assertGreaterEqual(fsm._nat_schedule.env.stance_max, 0.36)
         self.assertAlmostEqual(float(nat_fwd.period), 1.2)
 
-    def test_unsynced_recipe_would_ignore_cli(self):
-        """Document the old bug: args updated but stale recipe dict wins in builder."""
-        with mock.patch.object(sys, "argv", ["walk", "--gait-period", "1.20"]):
+    def test_cli_synced_stack_beats_preset_period(self):
+        """SoftTrotBuild.from_gait_stack must honor CLI-synced GaitStackConfig."""
+        with mock.patch.object(
+            sys, "argv",
+            ["walk", "--natural-soft-trot", "--gait-period", "1.20"],
+        ):
             args = parse_args()
-        stale = dict(NATURAL_SOFT_TROT_WBC)  # intentionally NOT passed through sync
-        # Mimic old apply_preset that only mutated args:
-        from marsdog_control.motion.gait_recipes import apply_values
-        apply_values(args, stale)  # would overwrite CLI...
-        # restore CLI on args only (old behavior)
-        args.period = 1.20
-        args.nat_period = 1.20
+        recipe = dict(NATURAL_SOFT_TROT_WBC)
+        apply_preset_preserving_cli(args, recipe)
         cfg = GaitStackConfig.from_args(args)
-        controllers = build_controller_set(
-            cfg, front_x0=0.0, rear_x0=0.0, natural_params=stale,
+        soft = SoftTrotBuild.from_gait_stack(
+            cfg, x_offset_front=0.0, x_offset_rear=0.0,
+            hip_abduction=float(cfg.hip_abd),
         )
-        # Stale recipe keeps preset period → nat_fwd ignores CLI (the bug we fixed)
-        self.assertAlmostEqual(
+        controllers = build_controller_set(
+            cfg, front_x0=0.0, rear_x0=0.0, soft_build=soft,
+        )
+        self.assertAlmostEqual(cfg.nat_period, 1.20)
+        self.assertAlmostEqual(float(controllers.nat_fwd.period), 1.20, places=2)
+        self.assertNotAlmostEqual(
             float(controllers.nat_fwd.period),
             float(NATURAL_SOFT_TROT_WBC["period"]),
             places=2,
         )
-        self.assertAlmostEqual(cfg.nat_period, 1.20)
 
 
 if __name__ == "__main__":

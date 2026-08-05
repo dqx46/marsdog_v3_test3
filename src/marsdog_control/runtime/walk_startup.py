@@ -5,9 +5,12 @@ Config boundary (single source):
 1. Validate bench / direction-test knobs on the CLI ``Namespace`` (boundary).
 2. Apply natural presets onto ``Namespace`` (boundary only).
 3. ``bootstrap_runtime_config`` → required ``RuntimeConfig`` (FATAL if missing).
-4. Wire ``RuntimeState`` + ``WalkStartupContext`` from typed config / residual CLI.
+4. Snapshot ``WalkSessionConfig`` (runtime + build + policies) once; build typed
+   ``SoftTrotBuild`` / Walk / Jump recipes for stack assembly.
+5. Wire ``RuntimeState`` + ``WalkStartupContext`` from typed config / residual CLI.
 
-After this function returns, hot-path code must not re-read migrated ``args`` fields.
+After this function returns, hot-path code must not re-read migrated ``args``
+fields, and must not re-run ``WalkBuildConfig.from_args``.
 """
 
 from __future__ import annotations
@@ -22,25 +25,24 @@ from marsdog_control.apps.walk_cli import (
     apply_preset_preserving_cli,
     print_open_loop_params,
 )
-from marsdog_control.compat import ensure_legacy_path, project_root
+from marsdog_control.compat import project_root
+from marsdog_control.config.control_policies import (
+    ControlPolicies,
+    ControlPolicyError,
+    LateralOwner,
+)
 from marsdog_control.config.gait_tuning import GAIT, print_tuning_banner
 from marsdog_control.config.real_patches import print_patch_banner
 from marsdog_control.config.schema import RuntimeConfig
-from marsdog_control.motion.gait_recipes import (
-    NATURAL_SOFT_TROT,
-    NATURAL_TROT_REAL,
-    NATURAL_WALK_REAL,
-    NATURAL_WALK_WBC,
-    JUMP_REAL,
-    JUMP_WBC,
-)
+from marsdog_control.config.soft_trot_recipe import soft_trot_recipe_dict
+from marsdog_control.config.jump_recipe import JUMP_RECIPE, JUMP_RECIPE_WBC
+from marsdog_control.config.stack_build import WalkBuildConfig, WalkSessionConfig
+from marsdog_control.config.walk_recipe import WALK_RECIPE, WALK_RECIPE_WBC
+from marsdog_control.motion.gait_params import SoftTrotBuild
+from marsdog_control.motion.gait_recipes import NATURAL_TROT_REAL, StandingPoseConfig
+from marsdog_control.motion import gait_controller as _gc
 from marsdog_control.motion.tarsus_bench import TarsusBenchConfig
 from marsdog_control.runtime.walk_state import WalkRuntimeState
-
-ensure_legacy_path()
-
-from marsdog_control.motion import gait_controller  # noqa: E402
-from marsdog_control.motion import kinematics  # noqa: E402
 
 
 @dataclass
@@ -48,15 +50,19 @@ class WalkStartupContext:
     """Result of successful pre-bring-up startup preparation."""
 
     args: Any
-    runtime_config: RuntimeConfig
+    session: WalkSessionConfig
     runtime_state: WalkRuntimeState
     natural_active: bool
     natural_soft: bool
-    natural_params: dict
+    soft_build: SoftTrotBuild
+    walk_recipe: Any
+    jump_recipe: Any
     natural_walk: bool
-    walk_params: dict
     natural_jump: bool
-    jump_params: dict
+    # Session ownership handles — constructed once; bind at control-stack build
+    # and reused by loop assembly (no second LateralPlanner / gate).
+    lateral_planner: Any
+    attitude_gate: Any
     trot_flag: bool
     no_spine: bool
     joint_direction_test: bool
@@ -89,6 +95,14 @@ class WalkStartupContext:
     bench_tarsus_side: Optional[str]
     bench_cfg: Optional[TarsusBenchConfig]
 
+    @property
+    def runtime_config(self) -> RuntimeConfig:
+        return self.session.runtime
+
+    @property
+    def build(self) -> WalkBuildConfig:
+        return self.session.build
+
 
 def emit_typed_config(args) -> Optional[RuntimeConfig]:
     """Build/validate/print typed RuntimeConfig (one-way; no args write-back).
@@ -113,9 +127,12 @@ def prepare_walk_startup(
     *,
     runtime_state: WalkRuntimeState,
     joint_gains: dict,
+    gp_trot_threshold: float = 0.15,
+    gp_deadzone: float = 0.12,
 ) -> Optional[WalkStartupContext]:
     """Validate CLI, apply presets, wire RuntimeState features + banner.
 
+    Snapshots ``WalkBuildConfig`` once after Soft pour / RuntimeConfig bootstrap.
     Returns ``None`` when startup must abort (FATAL already printed).
     """
     try:
@@ -189,44 +206,68 @@ def prepare_walk_startup(
     if natural_active:
         print("[tarsus] 约定: 上电前已手动掰到达妙硬限位零点(无 CLI 确认开关)")
 
-    # SoftTrot 唯一真源 NATURAL_SOFT_TROT（WBC/REAL 别名同对象）。
+    # SoftTrot 唯一真源 SoftTrotRecipe（NATURAL_SOFT_TROT 为其 dict 出口）。
+    # Soft pour = Geometry + FootShape + BalanceOverlay only（无 IMU/WBC 键）。
     # --wbc 只切换控制器(WBC+MPC vs 阻抗)，不切换几何。
+    # Boundary-only dict: used for CLI pour / banners here; never stored on
+    # WalkStartupContext or forwarded into the hot path.
     if natural_soft:
-        natural_params = dict(NATURAL_SOFT_TROT)
+        pour = soft_trot_recipe_dict()
     else:
-        natural_params = dict(NATURAL_TROT_REAL)
+        pour = dict(NATURAL_TROT_REAL)
     print(
-            f"[nat] SoftTrot 大步预设: amp={natural_params['amp_front']*100:.1f}/"
-            f"{natural_params['amp_rear']*100:.1f}cm "
-            f"front_scale={natural_params.get('fwd_front_amp_scale', 1.0):.2f} "
-            f"period={natural_params['period']:.2f}s"
-        )
+        f"[nat] SoftTrot 大步预设: amp={pour['amp_front']*100:.1f}/"
+        f"{pour['amp_rear']*100:.1f}cm "
+        f"front_scale={pour.get('fwd_front_amp_scale', 1.0):.2f} "
+        f"period={pour['period']:.2f}s"
+    )
     overridden: list = []
     # SoftTrot 默认开启时始终灌 Soft 预设（即使同时 --jump/--natural-walk，nat_fwd 仍要 Soft）。
     if natural_soft or bool(args.natural_trot):
-        overridden = apply_preset_preserving_cli(args, natural_params)
+        overridden = apply_preset_preserving_cli(args, pour)
         if overridden:
             print("[nat] 显式 CLI 覆盖预设: " + ", ".join(overridden))
-        T = float(getattr(args, "nat_period", natural_params.get("period", 0.87)))
-        st = float(getattr(args, "stance", natural_params.get("stance", 0.56)))
+        for key in list(pour):
+            if hasattr(args, key):
+                pour[key] = getattr(args, key)
+        T = float(getattr(args, "nat_period", pour.get("period", 0.87)))
+        st = float(getattr(args, "stance", pour.get("stance", 0.56)))
         if T > 1e-6:
             print(
                 f"[cadence] SoftTrot T={T:.3f}s  f={1.0 / T:.2f} Hz  "
                 f"stance={st:.2f} (swing={1.0 - st:.2f})"
             )
-        com_m = float(getattr(args, "com_shift_m",
-                              natural_params.get("com_shift_m", 0.0)))
+        com_m = float(getattr(args, "com_shift_m", pour.get("com_shift_m", 0.0)))
+        sway = float(getattr(args, "lateral_sway", pour.get("lateral_sway", 0.0)))
+        # Soft lateral mutex: dual active overlays are FATAL unless both were
+        # explicitly requested on CLI (then warn and keep COM_SHIFT preference).
+        explicit = set(getattr(args, "_explicit_cli", set()) or ())
+        dual = abs(com_m) > 1e-9 and abs(sway) > 1e-9
+        if dual and not ({"com_shift_m", "lateral_sway"} <= explicit):
+            print(
+                f"[FATAL] Soft lateral conflict: com_shift_m={com_m} and "
+                f"lateral_sway={sway} both nonzero; pick one owner "
+                f"(or pass both explicitly on CLI to override with warning)"
+            )
+            return None
+        if dual:
+            print(
+                f"[WARN] Soft lateral dual override on CLI "
+                f"(com_shift={com_m*1000:.1f}mm, sway={sway*1000:.1f}mm); "
+                f"owner stays COM_SHIFT, sway ignored for policy"
+            )
+            sway = 0.0
+            setattr(args, "lateral_sway", 0.0)
+            pour["lateral_sway"] = 0.0
         if abs(com_m) > 1e-6:
             blend = float(getattr(args, "com_shift_blend",
-                                  natural_params.get("com_shift_blend", 0.15)))
+                                  pour.get("com_shift_blend", 0.15)))
             sign_note = "正=FL+RR→右(反相优)" if com_m > 0 else "负=旧同号方向"
             print(
                 f"[COM] SoftTrot 横向移重 com_shift={com_m*1000:+.1f}mm "
                 f"blend={blend:.2f} ({sign_note}; --com-shift 0 关闭)"
             )
         else:
-            sway = float(getattr(args, "lateral_sway",
-                                 natural_params.get("lateral_sway", 0.0)))
             print(
                 f"[COM] SoftTrot 横向移重 OFF "
                 f"(回退 lateral_sway={sway*1000:.1f}mm 半正弦)"
@@ -236,28 +277,25 @@ def prepare_walk_startup(
         print_open_loop_params(args)
         return None
 
-    walk_params = dict(
-        NATURAL_WALK_WBC if bool(getattr(args, "wbc", False)) else NATURAL_WALK_REAL
-    )
+    wbc_on = bool(getattr(args, "wbc", False))
+    walk_recipe = WALK_RECIPE_WBC if wbc_on else WALK_RECIPE
+    jump_recipe = JUMP_RECIPE_WBC if wbc_on else JUMP_RECIPE
     if natural_walk:
+        wr = walk_recipe
         print(
-            f"[walk] NaturalWalk 预设: amp={walk_params['amp_front']*100:.1f}/"
-            f"{walk_params['amp_rear']*100:.1f}cm "
-            f"period={walk_params['period']:.2f}s stance={walk_params['stance']:.2f} "
-            f"sway={walk_params['lateral_sway']*1000:.1f}mm "
-            f"spine={walk_params['spine_yaw_deg']:.1f}/"
-            f"{walk_params['spine_roll_deg']:.1f}°"
+            f"[walk] NaturalWalk 预设: amp={wr.amp_front*100:.1f}/"
+            f"{wr.amp_rear*100:.1f}cm "
+            f"period={wr.period:.2f}s stance={wr.stance:.2f} "
+            f"sway={wr.lateral_sway*1000:.1f}mm "
+            f"spine={wr.spine_yaw_deg:.1f}/{wr.spine_roll_deg:.1f}°"
         )
-
-    jump_params = dict(
-        JUMP_WBC if bool(getattr(args, "wbc", False)) else JUMP_REAL
-    )
     if natural_jump:
+        jr = jump_recipe
         print(
-            f"[jump] Jump 预设: crouch={jump_params['crouch_depth']*1000:.0f}mm "
-            f"push={jump_params['push_s']:.2f}s flight={jump_params['flight_s']:.2f}s "
-            f"push_vz={jump_params['push_vz']:.2f}m/s "
-            f"kp_z={jump_params.get('kp_base_z', 80.0):.0f} "
+            f"[jump] Jump 预设: crouch={jr.crouch_depth*1000:.0f}mm "
+            f"push={jr.push_s:.2f}s flight={jr.flight_s:.2f}s "
+            f"push_vz={jr.push_vz:.2f}m/s "
+            f"kp_z={jr.kp_base_z:.0f} "
             f"(力控增益挂 JumpController, 不灌 Soft args)"
         )
 
@@ -265,6 +303,14 @@ def prepare_walk_startup(
     runtime_config = emit_typed_config(args)
     if runtime_config is None:
         return None
+
+    # One-shot typed stack snapshot — assemble_walk_control_stack never digs args.
+    build = WalkBuildConfig.from_args(
+        args,
+        gp_trot_threshold=gp_trot_threshold,
+        gp_deadzone=gp_deadzone,
+        runtime=runtime_config,
+    )
 
     features = runtime_config.features
     gait = runtime_config.gait
@@ -381,17 +427,15 @@ def prepare_walk_startup(
               f"(换腿窗口少打反馈, 实机/仿真同源)")
 
     if getattr(args, "abd_legacy", False):
-        gait_controller.ABD_LEGACY = True
-        kinematics.ABD_LEGACY = True
-        print("[P1] 外展方向 = LEGACY(修正前): 翻转 fl_thigh_roll/rl_hip/rr_hip")
+        # Historical A/B flag; abduction math no longer reads a module global.
+        print("[P1] --abd-legacy 已废弃(无接线); 外展方向由 kinematics URDF 约定固定")
 
     swing_level = float(getattr(args, "swing_level", 0.0))
-    gait_controller.SWING_LEVEL = max(0.0, min(1.0, swing_level))
-    if gait_controller.SWING_LEVEL > 1e-6:
-        print(f"[P2] 摆动腿 IMU 预调平权重 = {gait_controller.SWING_LEVEL:.2f}")
+    if swing_level > 1e-6:
+        print(f"[P2] 摆动腿 IMU 预调平权重 = {max(0.0, min(1.0, swing_level)):.2f} "
+              f"(经 GaitStackConfig → 各控制器实例)")
 
-    gait_controller.SMOOTH_GAIT = features.smooth_gait_enabled
-    if gait_controller.SMOOTH_GAIT:
+    if features.smooth_gait_enabled:
         print("[C] 平滑步态开启: 支撑相匀速 + 摆动Hermite速度匹配 (消除一冲一冲)")
 
     anti_roll = float(getattr(args, "anti_roll", GAIT.anti_roll))
@@ -411,6 +455,39 @@ def prepare_walk_startup(
     )
     print_patch_banner(args)
 
+    # Physical-quantity ownership (once per session).
+    com_m_pol = float(getattr(args, "com_shift_m", 0.0))
+    sway_pol = float(getattr(args, "lateral_sway", 0.0))
+    try:
+        if natural_soft or bool(args.natural_trot):
+            lateral = ControlPolicies.soft_default_lateral(
+                com_shift_m=com_m_pol, lateral_sway=sway_pol)
+        else:
+            lateral = (
+                LateralOwner.SWAY if abs(sway_pol) > 1e-9
+                else LateralOwner.NONE
+            )
+        # Soft default path: Dynamics force-y must stay off (owner table).
+        if (
+            lateral is LateralOwner.COM_SHIFT
+            and abs(float(runtime_config.dynamics.com_y_shift_m)) > 1e-9
+        ):
+            raise ControlPolicyError(
+                "Soft LateralOwner.COM_SHIFT requires "
+                "DynamicsConfig.com_y_shift_m==0 "
+                f"(got {runtime_config.dynamics.com_y_shift_m})")
+        policies = ControlPolicies.from_runtime(
+            runtime_config, lateral=lateral)
+    except ControlPolicyError as exc:
+        print(f"[FATAL] control policies: {exc}")
+        return None
+    print(f"[ownership] {policies.banner_line()}")
+
+    from marsdog_control.motion.attitude_overlay import AttitudeOverlayGate
+    from marsdog_control.motion.lateral_planner import LateralPlanner
+    lateral_planner = LateralPlanner(session_owner=policies.lateral)
+    attitude_gate = AttitudeOverlayGate(attitude=policies.attitude)
+
     bench_cfg = None
     bench_side = devtools.bench_tarsus_side or args.bench_tarsus_side
     if bench_side:
@@ -426,19 +503,41 @@ def prepare_walk_startup(
             kp_by_id=runtime_state.dm.kp_by_id,
         )
 
+    no_spine = bool(getattr(args, "no_spine", False))
+    x_shift = float(getattr(args, "x_shift", GAIT.x_shift))
+    stand_pose = StandingPoseConfig.from_config(
+        build.gait,
+        front_x0=_gc._FRONT_X0,
+        rear_x0=_gc._REAR_X0,
+    )
+    fwd_hip_abd = float(build.gait.hip_abd) + (
+        0.01 if build.gait.fwd_use_bwd else 0.0)
+    soft_build = SoftTrotBuild.from_gait_stack(
+        build.gait,
+        x_offset_front=stand_pose.x_offset_front,
+        x_offset_rear=stand_pose.x_offset_rear,
+        hip_abduction=fwd_hip_abd,
+        spine_yaw_deg=0.0 if no_spine else None,
+        spine_roll_deg=0.0 if no_spine else None,
+    )
+    session = WalkSessionConfig(
+        runtime=runtime_config, build=build, policies=policies)
+
     return WalkStartupContext(
         args=args,
-        runtime_config=runtime_config,
+        session=session,
         runtime_state=runtime_state,
         natural_active=natural_active,
         natural_soft=natural_soft,
-        natural_params=natural_params,
+        soft_build=soft_build,
+        walk_recipe=walk_recipe,
+        jump_recipe=jump_recipe,
         natural_walk=natural_walk,
-        walk_params=walk_params,
         natural_jump=natural_jump,
-        jump_params=jump_params,
+        lateral_planner=lateral_planner,
+        attitude_gate=attitude_gate,
         trot_flag=bool(getattr(args, "trot", False)),
-        no_spine=bool(getattr(args, "no_spine", False)),
+        no_spine=no_spine,
         joint_direction_test=joint_direction_test,
         hip_abd_test=hip_abd_test,
         leg_pitch_test=leg_pitch_test,
@@ -460,7 +559,7 @@ def prepare_walk_startup(
         calf_pitch_test_amp_rad=float(args.calf_pitch_test or 0.0),
         front_foot_track_deg=float(getattr(
             args, "front_foot_track_deg", GAIT.front_foot_track_deg)),
-        x_shift=float(getattr(args, "x_shift", GAIT.x_shift)),
+        x_shift=x_shift,
         capture_lie_pose=bool(devtools.capture_lie_pose),
         logging_enabled=features.logging_enabled,
         gamepad_enabled=gamepad_enabled,

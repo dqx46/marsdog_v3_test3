@@ -6,11 +6,6 @@ All angle inputs/outputs in **radians** (no deg conversion).
 import time
 import threading
 
-# [解耦] 真实实现已下沉到此 src 模块; 保持逐字一致的扁平 import(from can_bus/
-# can_serial import ...), 由 ensure_legacy_path() 保证可解析(其 compat 别名回指 src)。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
-_ensure_legacy_path()
-
 from marsdog_control.hardware.motors.can_bus import CanBus, CAN_EFF_FLAG
 from marsdog_control.hardware.motors.can_serial import CanSerial
 

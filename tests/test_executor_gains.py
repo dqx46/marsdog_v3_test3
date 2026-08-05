@@ -96,6 +96,24 @@ class ResolveGainsTest(unittest.TestCase):
         self.assertAlmostEqual(kp_i, 8.0)
         self.assertAlmostEqual(kd_i, 0.5)
 
+    def test_incos_respects_zero_evo_fade(self):
+        # Regression: ``kp_evo=0.0`` must not fall through to brand default 55.
+        kp_i, kd_i, _ = resolve_gains(
+            _j("fl_calf", "incos"), kp_scale=1.0, use_joint_gains=False,
+            kp_lz=0.0, kd_lz=0.0, kp_evo=0.0, kd_evo=0.0,
+            leg_kp_scale=1.0, joint_gains=_GAINS)
+        self.assertAlmostEqual(kp_i, 0.0)
+        self.assertAlmostEqual(kd_i, 0.0)
+
+    def test_incos_explicit_channel_overrides_evo(self):
+        kp_i, kd_i, _ = resolve_gains(
+            _j("fl_calf", "incos"), kp_scale=1.0, use_joint_gains=False,
+            kp_lz=0.0, kd_lz=0.0, kp_evo=99.0, kd_evo=9.0,
+            leg_kp_scale=1.0, joint_gains=_GAINS,
+            kp_incos=3.0, kd_incos=0.25)
+        self.assertAlmostEqual(kp_i, 3.0)
+        self.assertAlmostEqual(kd_i, 0.25)
+
 
 if __name__ == "__main__":
     unittest.main()

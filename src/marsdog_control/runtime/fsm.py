@@ -14,12 +14,6 @@ natural_trot 归为 NATURAL(具体 NaturalTrot / NaturalSoftTrot 由启动时构
 
 from __future__ import annotations
 
-# [解耦] 真实实现已从 mocap_to_real 下沉到此 src 模块; 保持逐字一致的扁平 import,
-# 由 ensure_legacy_path() 保证 mocap_to_real 在 sys.path 上可解析(其 compat 别名回指
-# 本 src 包, 单一模块实体)。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
-_ensure_legacy_path()
-
 import math
 import time
 from typing import Dict, Optional, Set
@@ -129,6 +123,7 @@ class RuntimeStateMachine:
                     getattr(self.nat_fwd, "max_turn_amp_diff", 0.020)
                 ),
                 lock_geometry=True,
+                bwd_amp_scale=float(drive.bwd_amp_scale),
             )
         )
         self._walk_schedule = WalkSchedule(
@@ -170,6 +165,7 @@ class RuntimeStateMachine:
                     getattr(self.trot_fwd, "max_turn_amp_diff", 0.020)
                 ),
                 lock_geometry=True,
+                bwd_amp_scale=float(drive.bwd_amp_scale),
             )
         )
 
@@ -447,25 +443,20 @@ class RuntimeStateMachine:
                 apply_schedule_to_gait(self.trot_fwd, sched)
             return
 
-        # 2d) 无输入 = 归站立
+        # 2d) 无输入 = 归站立 — amp/vel 只经 Schedule 写入（禁止平行写 recipe amp）
         self.throttle = 0.0
+        stop = VelocityCommand(vx=0.0, yaw_rate=0.0)
         if self.walk_mode is RobotMode.NATURAL and self.mode is RobotMode.NATURAL:
-            self.nat_fwd.turn_cmd = 0.0
-            self.nat_fwd.amp_front = self.nat_amp_front
-            self.nat_fwd.amp_rear = self.nat_amp_rear
+            apply_schedule_to_gait(self.nat_fwd, self._nat_schedule.map(stop))
         if self.walk_mode is RobotMode.WALK and self.mode is RobotMode.WALK:
-            self.walk_fwd.turn_cmd = 0.0
-            self.walk_fwd.amp_front = self.walk_amp_front
-            self.walk_fwd.amp_rear = self.walk_amp_rear
+            apply_schedule_to_gait(self.walk_fwd, self._walk_schedule.map(stop))
             self.walk_fwd.spot_turn_active = False
         if self.walk_mode is RobotMode.JUMP and self.mode is RobotMode.JUMP:
             self.jump_fwd.trigger = False
             self.jump_fwd.auto_rejump = False
             self.jump_fwd.spot_turn_active = False
         if self.mode is RobotMode.TROT and self.direction is Direction.FWD:
-            self.trot_fwd.turn_cmd = 0.0
-            self.trot_fwd.amp_front = self.fwd_amp_front
-            self.trot_fwd.amp_rear = self.fwd_amp_rear
+            apply_schedule_to_gait(self.trot_fwd, self._trot_schedule.map(stop))
         if self.mode is not RobotMode.STAND:
             self.request_transition(RobotMode.STAND, targets_now=last_targets,
                                     blend_time=0.6)
@@ -518,20 +509,13 @@ class RuntimeStateMachine:
             sched = self._trot_schedule.map(VelocityCommand(vx=vx_mps, yaw_rate=yaw_rate))
             apply_schedule_to_gait(self.trot_fwd, sched)
         else:
-            vmax = max(1e-6, self._trot_schedule.max_forward_vx())
-            frac = max(0.0, min(1.0, abs(float(vx_mps)) / vmax))
-            a_scale = a.throttle_min_scale + (1.0 - a.throttle_min_scale) * frac
-            self.trot_bwd.amp_front = -a.amp_rear * a.bwd_amp_scale * a_scale
-            self.trot_bwd.amp_rear = -a.amp_front * a.bwd_amp_scale * a_scale
-            self.trot_bwd.turn_y_gain = a.cruise_turn_yamp
+            # BWD: Schedule is sole amp/vel writer (sign-flip inside SoftTrotSchedule).
             yaw_rate = stick_yaw_to_rate(
                 stick_yaw,
                 yaw_rate_max=float(getattr(a, "yaw_rate_max", 0.40)),
                 deadzone=a.gp_deadzone,
             )
-            self.trot_bwd.turn_cmd = (
-                (yaw_rate / 0.40) * a.cruise_turn_scale if abs(yaw_rate) > 1e-9 else 0.0
-            )
-            avg = 0.5 * (abs(self.trot_bwd.amp_front) + abs(self.trot_bwd.amp_rear))
-            period = float(getattr(self.trot_bwd, "period", 0.9))
-            self.trot_bwd.vel_cmd = (-2.0 * avg / max(1e-3, period), 0.0, float(yaw_rate))
+            # BWD: SoftTrotSchedule owns sign-flip + end-swap + bwd_amp_scale.
+            sched = self._trot_schedule.map(
+                VelocityCommand(vx=-abs(float(vx_mps)), yaw_rate=yaw_rate))
+            apply_schedule_to_gait(self.trot_bwd, sched)

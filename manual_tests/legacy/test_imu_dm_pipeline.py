@@ -5,19 +5,19 @@ import time
 import unittest
 from types import SimpleNamespace
 
-from marsdog_control.control.imu_balance import ImuAttitudeController
-from marsdog_control.hardware.sensors.imu_wt901 import _ema_alpha
-from marsdog_control.motion.gait_controller import NaturalSoftTrot, StandController
-from marsdog_control.motion.kinematics import front_foot_pitch, motor_to_urdf
-from marsdog_control.config.joints import JOINT_BY_NAME
-from marsdog_control.hardware.motors.damiao import (
+from imu_controller import ImuAttitudeController
+from imu_wt901 import _ema_alpha
+from gait_controller import NaturalSoftTrot, StandController
+from kinematics import front_foot_pitch, motor_to_urdf
+from joint_config import JOINT_BY_NAME
+from motor_damiao import (
     DM_S2325_DQMAX,
     DM_S2325_PMAX,
     DM_S2325_TAUMAX,
     MotorDamiao,
     _float_to_uint,
 )
-from marsdog_control.core.types import Direction, RobotMode
+from robot_types import Direction, RobotMode
 import walk
 from walk import apply_preset_preserving_cli, tarsus_bench_reference
 

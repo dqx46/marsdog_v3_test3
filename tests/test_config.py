@@ -43,7 +43,7 @@ class UnitConversionTest(unittest.TestCase):
     def test_missing_args_fall_back_to_defaults(self):
         cfg = runtime_config_from_args(Namespace())
         self.assertIsInstance(cfg, RuntimeConfig)
-        self.assertAlmostEqual(cfg.gait.body_height_m, 0.24)
+        self.assertAlmostEqual(cfg.gait.body_height_m, 0.25)
         self.assertTrue(cfg.gait.natural_soft_trot_enabled)
         self.assertTrue(cfg.gait.natural_trot_enabled)
 
@@ -92,7 +92,7 @@ class LoaderOneWayTest(unittest.TestCase):
     def test_offline_bridge_still_fills_namespace_for_tools(self):
         cfg = runtime_config_from_args(Namespace())
         legacy = apply_runtime_config_to_legacy_args(Namespace(), cfg)
-        self.assertAlmostEqual(legacy.height, 0.24)
+        self.assertAlmostEqual(legacy.height, 0.25)
         self.assertAlmostEqual(legacy.imu_angle_tau_ms, 25.0)
         self.assertAlmostEqual(legacy.bench_max_error_deg, 8.0)
         self.assertAlmostEqual(legacy.dm_kp_fl, 220.0)

@@ -1,13 +1,17 @@
-"""Real-robot / gait overlay patches — inventory, switches, sim-parity preset.
+"""Real-robot / gait overlay patches — inventory + named profiles.
 
 Core locomotion geometry (period / stance / amp / step_h / touchdown_compress)
-is NOT zeroed by ``--sim-parity``. Overlay compensations are.
+is NOT zeroed by the ``parity`` profile. Overlay compensations are.
+
+Profiles (preferred operator surface):
+  * ``parity``  — all overlays off (``--sim-parity``)
+  * ``real_soft`` — SoftTrot default: only ``com_shift`` ON
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -119,13 +123,73 @@ PATCHES: Tuple[PatchSpec, ...] = (
     ),
 )
 
-SIM_PARITY_OVERRIDES: Dict[str, Any] = {
-    p.dest: p.parity_value for p in PATCHES
+
+def _parity_overrides() -> Dict[str, Any]:
+    out = {p.dest: p.parity_value for p in PATCHES}
+    out["trot_roll_ff_pos_deg"] = 0.0
+    out["roll_trim_mm"] = 0.0
+    out["pitch_trim_mm"] = 0.0
+    out["thigh_swing_front_deg"] = 0.0
+    return out
+
+
+@dataclass(frozen=True)
+class PatchProfile:
+    """Named overlay bundle — prefer this over flipping 23 switches."""
+
+    name: str
+    overrides: Mapping[str, Any]
+    # Keys expected ON after profile + Soft pour (for banners / tests).
+    expect_on: frozenset = frozenset()
+
+
+PROFILE_PARITY = PatchProfile(
+    name="parity",
+    overrides=_parity_overrides(),
+    expect_on=frozenset(),
+)
+
+# SoftTrot real default: overlays off except lateral com_shift (recipe).
+# Overrides here only force OFF extras that Soft pour might leave; com_shift
+# stays from SoftTrotRecipe (not listed → not clobbered by profile apply).
+PROFILE_REAL_SOFT = PatchProfile(
+    name="real_soft",
+    overrides={
+        "imu": False,
+        "imu_softstart_s": 0.0,
+        "imu_predict_ms": 0.0,
+        "dynamic_imu_predict": False,
+        "imu_phase_gate": False,
+        "td_imu_freeze_i": False,
+        "imu_slew_mm_s": 0.0,
+        "ff_decouple": False,
+        "swing_level": 0.0,
+        "var_impedance": False,
+        "tarsus_lead_fl_ms": 0.0,
+        "tarsus_lead_fr_ms": 0.0,
+        "dm_dq_feedforward": False,
+        "anti_roll": 0.0,
+        "lateral_sway": 0.0,
+        "trot_roll_ff_neg_deg": 0.0,
+        "trot_roll_ff_pos_deg": 0.0,
+        "rear_clearance_m": 0.0,
+        "spine_yaw_deg": 0.0,
+        "spine_roll_deg": 0.0,
+        "thigh_swing_rear_deg": 0.0,
+        "thigh_swing_front_deg": 0.0,
+        "front_foot_swing_track": 1.0,
+        "front_foot_stance_push_deg": 0.0,
+    },
+    expect_on=frozenset({"com_shift"}),
+)
+
+PROFILES: Dict[str, PatchProfile] = {
+    PROFILE_PARITY.name: PROFILE_PARITY,
+    PROFILE_REAL_SOFT.name: PROFILE_REAL_SOFT,
 }
-SIM_PARITY_OVERRIDES["trot_roll_ff_pos_deg"] = 0.0
-SIM_PARITY_OVERRIDES["roll_trim_mm"] = 0.0
-SIM_PARITY_OVERRIDES["pitch_trim_mm"] = 0.0
-SIM_PARITY_OVERRIDES["thigh_swing_front_deg"] = 0.0
+
+# Back-compat alias used by older imports / tests.
+SIM_PARITY_OVERRIDES: Dict[str, Any] = dict(PROFILE_PARITY.overrides)
 
 
 def _is_on(args: Any, spec: PatchSpec) -> bool:
@@ -143,23 +207,50 @@ def _is_on(args: Any, spec: PatchSpec) -> bool:
     return bool(v)
 
 
-def apply_sim_parity(args: Any) -> List[str]:
-    """Apply sim-parity overrides for non-explicit CLI dests. Returns applied keys."""
-    if not bool(getattr(args, "sim_parity", False)):
-        return []
+def apply_patch_profile(
+    args: Any,
+    profile: PatchProfile,
+    *,
+    force: bool = False,
+) -> List[str]:
+    """Apply profile overrides for non-explicit CLI dests. Returns applied keys."""
     explicit = set(getattr(args, "_explicit_cli", set()))
     applied: List[str] = []
-    for dest, value in SIM_PARITY_OVERRIDES.items():
-        if dest in explicit:
+    for dest, value in profile.overrides.items():
+        if not force and dest in explicit:
             continue
         if hasattr(args, dest):
             setattr(args, dest, value)
             applied.append(dest)
-    explicit |= set(SIM_PARITY_OVERRIDES.keys())
-    explicit.add("sim_parity")
+    explicit |= set(profile.overrides.keys())
     args._explicit_cli = explicit
-    args.sim_parity = True
+    args.patch_profile = profile.name
+    if profile.name == "parity":
+        args.sim_parity = True
+        explicit.add("sim_parity")
+        args._explicit_cli = explicit
     return sorted(applied)
+
+
+def apply_sim_parity(args: Any) -> List[str]:
+    """Apply ``parity`` profile when ``--sim-parity`` is set."""
+    if not bool(getattr(args, "sim_parity", False)):
+        return []
+    return apply_patch_profile(args, PROFILE_PARITY)
+
+
+def resolve_patch_profile(args: Any) -> Optional[str]:
+    """Return active profile name for banners (parity / real_soft / None)."""
+    named = getattr(args, "patch_profile", None)
+    if named:
+        return str(named)
+    if bool(getattr(args, "sim_parity", False)):
+        return PROFILE_PARITY.name
+    if bool(getattr(args, "natural_soft_trot", False)):
+        on = {k for k, is_on, _ in patch_status(args) if is_on}
+        if on <= PROFILE_REAL_SOFT.expect_on or on == PROFILE_REAL_SOFT.expect_on:
+            return PROFILE_REAL_SOFT.name
+    return None
 
 
 def patch_status(args: Any) -> List[Tuple[str, bool, str]]:
@@ -171,8 +262,11 @@ def patch_status(args: Any) -> List[Tuple[str, bool, str]]:
 
 def format_patch_banner(args: Any) -> str:
     lines = ["[patches] 叠加补偿状态 (核心几何 period/amp/step_h 不在此列):"]
-    if bool(getattr(args, "sim_parity", False)):
-        lines.append("  mode=sim-parity  (未显式指定的补丁已关闭)")
+    profile = resolve_patch_profile(args)
+    if profile == "parity":
+        lines.append("  profile=parity  (未显式指定的补丁已关闭)")
+    elif profile == "real_soft":
+        lines.append("  profile=real_soft  (默认仅 com_shift)")
     on_n = 0
     for key, is_on, label in patch_status(args):
         mark = "ON " if is_on else "off"
@@ -196,10 +290,16 @@ def print_patch_banner(args: Any) -> None:
 
 __all__ = [
     "PATCHES",
+    "PROFILES",
+    "PROFILE_PARITY",
+    "PROFILE_REAL_SOFT",
+    "PatchProfile",
     "PatchSpec",
     "SIM_PARITY_OVERRIDES",
+    "apply_patch_profile",
     "apply_sim_parity",
     "format_patch_banner",
     "patch_status",
     "print_patch_banner",
+    "resolve_patch_profile",
 ]

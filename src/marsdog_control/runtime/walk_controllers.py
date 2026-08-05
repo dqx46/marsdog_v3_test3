@@ -3,9 +3,8 @@
 Phase A extraction from ``apps.walk.main``: keep construction logic out of the
 app shell while preserving the same parameter wiring and print side-effects.
 
-Phase M: CLI ``args`` is snapshotted once into ``GaitStackConfig`` /
-``FsmDriveConfig`` / ``ImuBuildConfig`` at the top of
-``assemble_walk_control_stack``; factories below never dig into a Namespace.
+Phase M: ``WalkBuildConfig`` is snapshotted once in ``prepare_walk_startup``;
+``assemble_walk_control_stack`` only consumes typed configs (no Namespace dig).
 """
 
 from __future__ import annotations
@@ -14,9 +13,6 @@ import math
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from marsdog_control.compat import ensure_legacy_path
-
-ensure_legacy_path()
 
 from marsdog_control.motion import gait_controller  # noqa: E402
 from marsdog_control.motion.gait_controller import GaitController  # noqa: E402
@@ -26,6 +22,7 @@ from marsdog_control.config.stack_build import (  # noqa: E402
     FsmDriveConfig,
     GaitStackConfig,
     ImuBuildConfig,
+    WalkBuildConfig,
 )
 from marsdog_control.core.types import RobotMode  # noqa: E402
 from marsdog_control.runtime.fsm import RuntimeStateMachine  # noqa: E402
@@ -62,6 +59,8 @@ class WalkControlStack:
     fwd: ForwardGaitAmps
     natural_active: bool
     start_mode: RobotMode
+    lateral_planner: Any = None
+    attitude_gate: Any = None
 
 
 def compute_forward_gait_amps(cfg: GaitStackConfig) -> ForwardGaitAmps:
@@ -96,31 +95,29 @@ def build_gait_controllers(
     cfg: GaitStackConfig,
     *,
     natural_active: bool,
-    natural_params: dict,
-    walk_params: Optional[dict] = None,
-    jump_params: Optional[dict] = None,
+    soft_build: Optional[Any] = None,
+    walk_recipe: Optional[Any] = None,
+    jump_recipe: Optional[Any] = None,
     no_spine: bool = False,
 ):
-    """Wrap ``gait_recipes.build_controller_set`` with walk-startup defaults."""
+    """Wrap ``gait_recipes.build_controller_set`` with walk-startup defaults.
+
+    Prefer typed ``soft_build`` / recipes from ``WalkStartupContext``.
+    """
+    spine_yaw = 0.0 if no_spine else None
+    spine_roll = 0.0 if no_spine else None
     return build_controller_set(
         cfg,
         front_x0=gait_controller._FRONT_X0,
         rear_x0=gait_controller._REAR_X0,
-        # Always pass recipe dict so soft-trot extras (rear_clearance_m, retract, …)
-        # apply; cfg alone does not carry every NATURAL_SOFT_TROT_WBC key.
-        natural_params=natural_params,
-        walk_params=walk_params,
-        jump_params=jump_params,
-        natural_spine_yaw_deg=(
-            0.0 if no_spine else (
-                None if natural_active
-                else natural_params.get("spine_yaw_deg", 1.5))
-        ),
-        natural_spine_roll_deg=(
-            0.0 if no_spine else (
-                None if natural_active
-                else natural_params.get("spine_roll_deg", 0.6))
-        ),
+        soft_build=soft_build,
+        walk_recipe=walk_recipe,
+        jump_recipe=jump_recipe,
+        natural_params=None,
+        walk_params=None,
+        jump_params=None,
+        natural_spine_yaw_deg=spine_yaw,
+        natural_spine_roll_deg=spine_roll,
         pace_use_stand_offsets=False,
     )
 
@@ -240,30 +237,30 @@ def build_imu_attitude_controller(
 
 
 def assemble_walk_control_stack(
-    args,
+    build: WalkBuildConfig,
     *,
     natural_active: bool,
-    natural_params: dict,
-    gp_trot_threshold: float,
-    gp_deadzone: float,
+    soft_build: Optional[Any] = None,
+    walk_recipe: Optional[Any] = None,
+    jump_recipe: Optional[Any] = None,
     natural_soft: bool = False,
     natural_walk: bool = False,
-    walk_params: Optional[dict] = None,
     natural_jump: bool = False,
-    jump_params: Optional[dict] = None,
     trot_flag: bool = False,
     no_spine: bool = False,
     load_trim_cal: Optional[Callable[[], Any]] = None,
+    lateral_planner: Optional[Any] = None,
+    attitude_gate: Optional[Any] = None,
 ) -> WalkControlStack:
-    """Build controllers + FSM + safety + IMU for walk startup.
+    """Build controllers + FSM + safety + IMU from a typed ``WalkBuildConfig``.
 
-    Boundary: snapshot post-preset CLI ``args`` once into typed stack configs.
-    Mode flags come from ``WalkStartupContext`` (not re-read from Namespace).
+    Does not dig into CLI ``Namespace`` — snapshot once in ``prepare_walk_startup``.
+    When ``lateral_planner`` / ``attitude_gate`` are provided (from session
+    prepare), ownership is bound immediately after controller construction.
     """
-    gait_cfg = GaitStackConfig.from_args(args)
-    imu_cfg = ImuBuildConfig.from_args(args)
-    drive = FsmDriveConfig.from_args(
-        args, gp_trot_threshold=gp_trot_threshold, gp_deadzone=gp_deadzone)
+    gait_cfg = build.gait
+    imu_cfg = build.imu
+    drive = build.drive
     print(
         f"[teleop] 摇杆走/停→固定巡航几何 cruise_vx={drive.cruise_vx:.3f} m/s "
         f"(SI; 深度不改步态; period/stance/amp=配方原值; 对齐仿真 --vx {drive.cruise_vx:.3f})"
@@ -288,11 +285,16 @@ def assemble_walk_control_stack(
     controllers = build_gait_controllers(
         gait_cfg,
         natural_active=natural_active,
-        natural_params=natural_params,
-        walk_params=walk_params,
-        jump_params=jump_params,
+        soft_build=soft_build,
+        walk_recipe=walk_recipe,
+        jump_recipe=jump_recipe,
         no_spine=no_spine,
     )
+    if lateral_planner is not None and attitude_gate is not None:
+        controllers.bind_ownership(
+            lateral_planner=lateral_planner,
+            attitude_gate=attitude_gate,
+        )
     (stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd,
      nat_fwd, walk_fwd, jump_fwd) = controllers.as_tuple()
 
@@ -351,4 +353,6 @@ def assemble_walk_control_stack(
         fwd=fwd,
         natural_active=natural_active,
         start_mode=start_mode,
+        lateral_planner=lateral_planner,
+        attitude_gate=attitude_gate,
     )

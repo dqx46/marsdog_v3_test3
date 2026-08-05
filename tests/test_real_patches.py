@@ -79,12 +79,25 @@ class RealPatchesTest(unittest.TestCase):
         self.assertEqual(apply_sim_parity(args), [])
         self.assertAlmostEqual(float(args.com_shift_m), 0.012)
 
-    def test_patch_inventory_excludes_removed_auto_trim(self):
-        keys = {p.key for p in PATCHES}
-        self.assertNotIn("auto_trim", keys)
-        self.assertNotIn("load_trim_cal", keys)
-        self.assertNotIn("save_trim_cal", keys)
-        self.assertGreaterEqual(len(PATCHES), 10)
+    def test_patch_profiles_named(self):
+        from marsdog_control.config.real_patches import (
+            PROFILE_PARITY, PROFILE_REAL_SOFT, PROFILES, resolve_patch_profile,
+        )
+        self.assertIn("parity", PROFILES)
+        self.assertIn("real_soft", PROFILES)
+        self.assertEqual(PROFILE_PARITY.expect_on, frozenset())
+        self.assertEqual(PROFILE_REAL_SOFT.expect_on, frozenset({"com_shift"}))
+
+        old = sys.argv
+        try:
+            sys.argv = ["walk", "--natural-soft-trot", "--no-wbc", "--no-vmc"]
+            args = parse_args()
+        finally:
+            sys.argv = old
+        from marsdog_control.apps.walk_cli import apply_preset_preserving_cli
+        from marsdog_control.motion.gait_recipes import NATURAL_SOFT_TROT
+        apply_preset_preserving_cli(args, dict(NATURAL_SOFT_TROT))
+        self.assertEqual(resolve_patch_profile(args), "real_soft")
 
 
 if __name__ == "__main__":

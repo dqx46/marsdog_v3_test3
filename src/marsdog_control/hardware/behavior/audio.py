@@ -10,10 +10,7 @@ import subprocess
 
 # [解耦] 真实实现已下沉到此 src 模块; bark.wav 与 sounds/ 仍随部署留在 mocap_to_real,
 # 故把 _DIR 锚定到 legacy 目录, 音频路径与原来逐字一致(不依赖本文件物理位置)。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
 from marsdog_control.compat import legacy_dir as _legacy_dir
-_ensure_legacy_path()
-
 from marsdog_control.config.bus_config import MOUTH_DEVICE, SPEAKER_ALSA_DEVICE
 
 _DIR = str(_legacy_dir())

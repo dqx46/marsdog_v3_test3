@@ -157,9 +157,15 @@ class SpotYawStepper:
                 dt = 0.0
             else:
                 dt = min(dt, period)
-            self.yaw_des += (dt / period) * yaw_per_cycle
-            # Prevent unbounded windup
-            self.yaw_des = max(self.yaw - 0.4, min(self.yaw + 0.4, self.yaw_des))
+            delta = (dt / period) * yaw_per_cycle
+            # Anti-windup: freeze when already leading measured yaw by
+            # yaw_lead_max in the integration direction. Do NOT project
+            # yaw_des onto [yaw±lead] — that recentres the setpoint whenever
+            # measured yaw drifts (including opposite the turn command).
+            lead = max(0.0, float(self.cfg.yaw_lead_max))
+            err = float(self.yaw_des) - float(self.yaw)
+            if not (lead > 0.0 and abs(err) >= lead and err * delta > 0.0):
+                self.yaw_des = float(self.yaw_des) + delta
         self._tick_t = float(t)
 
         for lg in LEGS:

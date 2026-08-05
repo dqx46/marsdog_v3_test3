@@ -135,6 +135,23 @@ def build_context():
     (stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd,
      nat_fwd, walk_fwd, jump_fwd) = controllers.as_tuple()
 
+    # Parity must bind ownership (fail-closed without planner zeros lateral).
+    from marsdog_control.config.control_policies import (
+        AttitudeOwner, LateralOwner,
+    )
+    from marsdog_control.motion.attitude_overlay import (
+        AttitudeOverlayGate, bind_ownership,
+    )
+    from marsdog_control.motion.lateral_planner import LateralPlanner
+    bind_ownership(
+        lateral_planner=LateralPlanner(session_owner=LateralOwner.SWAY),
+        attitude_gate=AttitudeOverlayGate(attitude=AttitudeOwner.NONE),
+        gaits=[
+            stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd,
+            nat_fwd, walk_fwd, jump_fwd,
+        ],
+    )
+
     fsm = RuntimeStateMachine(
         controllers, FsmDriveConfig.from_args(args),
         height=args.height,

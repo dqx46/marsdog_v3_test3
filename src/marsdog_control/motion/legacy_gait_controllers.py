@@ -1,27 +1,20 @@
-"""Retired gait controllers — kept for offline analysis / manual tests only.
+"""DEPRECATED — offline analysis / manual tests only; do not import on live path.
 
 ``TrotController`` / ``TurnTrotController`` / ``SimpleTrot`` are **not** on the
 live control path. ``gait_recipes.build_controller_set`` (the sole factory the
 runtime uses) only ever constructs ``StandController``/``StableTrot``/
-``StablePace``/``NaturalTrot``/``NaturalSoftTrot`` — those stayed in
-``gait_controller.py``. These three predate ``StableTrot`` (which superseded
-them with Raibert reactive foot placement + lateral CoM sway) and now exist
-only for:
+``StablePace``/``NaturalTrot``/``NaturalSoftTrot``. These three predate
+``StableTrot`` and exist only for:
 
   - ``manual_tests/legacy/test_amp_smooth.py``
   - ``apps/tools/analysis/dump_traj.py``
   - the ``python -m marsdog_control.motion.legacy_gait_controllers`` CLI below
 
-Extracted out of ``gait_controller.py`` (Phase N) purely to shrink the "巨石"
-module readers actually have to hold in their head for the live path; zero
-behavior change, zero live-path risk (nothing on ``RuntimePipeline.tick``
-imports this module).
+Do not revive these into ``RuntimePipeline.tick``. Prefer deleting callers
+then removing this module in a later cleanup.
 """
 
 from __future__ import annotations
-
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
-_ensure_legacy_path()
 
 import math
 

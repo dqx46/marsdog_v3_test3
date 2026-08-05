@@ -410,7 +410,7 @@ def parse_args():
     p.add_argument("--no-imu",      action="store_true",
                    help="[P1] 强制关闭 IMU 闭环(仍记录IMU); TEMP 下默认已关, 此开关冗余")
     p.add_argument("--abd-legacy",  action="store_true",
-                   help="[P1] 反转髋外展方向(fl_thigh_roll/rl_hip/rr_hip)回修正前, A/B 验证外展方向")
+                   help="[P1·已废弃] 历史外展 A/B 开关; 当前无接线, 仅打印提示")
     p.add_argument("--swing-level", type=float, default=GAIT.swing_level,
                    help="[P2] 摆动腿 IMU 预调平权重 0~1 (默认0=仅支撑腿; >0 让摆动腿落脚点也随姿态纠正)")
     p.add_argument("--imu-ema",     type=float, default=GAIT.imu_ema,

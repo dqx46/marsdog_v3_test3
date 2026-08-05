@@ -103,6 +103,10 @@ class GaitEnvelope:
     spot_wz_scale: float = 0.40
     spot_y_hold_max_m: float = 0.055
     spot_com_shift_m: float = 0.0
+    # Backward: swap front/rear amp (and step) so the larger drive end leads;
+    # then scale both by bwd_amp_scale (was FSM post-write).
+    bwd_swap_ends: bool = True
+    bwd_amp_scale: float = 1.0
 
     @staticmethod
     def _stance_band(
@@ -153,6 +157,8 @@ class GaitEnvelope:
         turn_y_amp: Optional[float] = None,
         turn_amp_diff: Optional[float] = None,
         lock_geometry: bool = False,
+        bwd_amp_scale: float = 1.0,
+        bwd_swap_ends: bool = True,
     ) -> "GaitEnvelope":
         sh_f = float(step_h_front) if step_h_front is not None else 0.024
         sh_r = float(step_h_rear) if step_h_rear is not None else max(sh_f, 0.034)
@@ -225,6 +231,8 @@ class GaitEnvelope:
             spot_wz_scale=0.40,
             spot_y_hold_max_m=0.055,
             spot_com_shift_m=0.0,
+            bwd_amp_scale=float(bwd_amp_scale),
+            bwd_swap_ends=bool(bwd_swap_ends),
         )
 
     @classmethod
@@ -377,30 +385,37 @@ class SoftTrotSchedule:
             speed_frac = self._speed_frac(u)
 
         sign = 1.0 if vx >= 0.0 else -1.0
-        # SoftTrot BWD today: only sign-flip (no front/rear amp swap).
-        # Forward recipe is asymmetric (front 2.2 / rear 3.0); reverse keeps that
-        # asymmetry mirrored → front steps stay small while rear stays large.
-        # TODO(bwd): when vx<0, swap |amp_f|/|amp_r| (and optionally bwd_amp_scale)
-        # so reverse uses the larger push on the new "drive" end — see walk logs
-        # where natural_bwd roll/err stay worse after FWD lock-D tuning.
-        amp_f = sign * e.amp_front_max * speed_frac
-        amp_r = sign * e.amp_rear_max * speed_frac
+        # BWD: swap ends so the larger recipe push leads the reverse direction,
+        # then apply envelope bwd_amp_scale (Schedule owns both — no FSM rewrite).
+        af_max = float(e.amp_front_max)
+        ar_max = float(e.amp_rear_max)
+        shf_max = float(e.step_h_front_max)
+        shr_max = float(e.step_h_rear_max)
+        shf_floor = float(e.step_h_front_floor)
+        shr_floor = float(e.step_h_rear_floor)
+        if sign < 0.0 and bool(getattr(e, "bwd_swap_ends", True)):
+            af_max, ar_max = ar_max, af_max
+            shf_max, shr_max = shr_max, shf_max
+            shf_floor, shr_floor = shr_floor, shf_floor
+        bwd_scale = float(getattr(e, "bwd_amp_scale", 1.0)) if sign < 0.0 else 1.0
+        amp_f = sign * af_max * speed_frac * bwd_scale
+        amp_r = sign * ar_max * speed_frac * bwd_scale
         if speed_frac > 1e-9:
             if e.lock_geometry:
-                step_f = float(e.step_h_front_max)
-                step_r = float(e.step_h_rear_max)
+                step_f = float(shf_max)
+                step_r = float(shr_max)
             else:
                 # Lift ∝ speed_frac; anti-limp floor only above throttle_min_scale.
-                scuff_f = min(0.010, 0.45 * e.step_h_front_floor)
-                scuff_r = min(0.012, 0.45 * e.step_h_rear_floor)
+                scuff_f = min(0.010, 0.45 * shf_floor)
+                scuff_r = min(0.012, 0.45 * shr_floor)
                 tms = max(1e-6, e.throttle_min_scale)
                 floor_blend = max(
                     0.0, min(1.0, (speed_frac - tms) / max(1e-6, 1.0 - tms))
                 )
-                floor_f = scuff_f + (e.step_h_front_floor - scuff_f) * floor_blend
-                floor_r = scuff_r + (e.step_h_rear_floor - scuff_r) * floor_blend
-                step_f = max(floor_f, e.step_h_front_max * speed_frac)
-                step_r = max(floor_r, e.step_h_rear_max * speed_frac)
+                floor_f = scuff_f + (shf_floor - scuff_f) * floor_blend
+                floor_r = scuff_r + (shr_floor - scuff_r) * floor_blend
+                step_f = max(floor_f, shf_max * speed_frac)
+                step_r = max(floor_r, shr_max * speed_frac)
         else:
             step_f = 0.0
             step_r = 0.0

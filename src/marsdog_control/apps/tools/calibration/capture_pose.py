@@ -26,7 +26,7 @@ import termios
 import time
 import tty
 
-from marsdog_control.compat import ensure_legacy_path, legacy_dir
+from marsdog_control.compat import legacy_dir
 from marsdog_control.config.joints import JOINT_BY_ID
 from marsdog_control.hardware.board import RkMotorBoard
 from marsdog_control.hardware.mapping import REAL_JOINTS
@@ -37,7 +37,6 @@ from marsdog_control.motion.lie_down import (
     save_lie_down_pose,
 )
 
-ensure_legacy_path()
 _RESOURCE_DIR = str(legacy_dir())
 
 _stop = False

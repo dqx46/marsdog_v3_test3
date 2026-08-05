@@ -65,7 +65,15 @@ def test_ipsilateral_abd_not_same_sign():
 
 
 def test_yaw_des_never_recentres():
-    s = SpotYawStepper(cfg=SpotYawStepConfig(yaw_step_rad=0.45), hip_xy=_hip)
+    """Measured yaw drifting must not drag yaw_des back toward yaw.
+
+    Projection clamps ``yaw_des ∈ [yaw±lead]`` recentre the setpoint when
+    pose updates the wrong way; freeze-at-lead anti-windup must not.
+    """
+    s = SpotYawStepper(
+        cfg=SpotYawStepConfig(yaw_step_rad=0.45, yaw_lead_max=0.5),
+        hip_xy=_hip,
+    )
     period = 0.85
     s.update_pose(0.0, yaw=0.0, base_xy=(0.0, 0.0))
     s.tick(0.0, turn=-1.0, period=period, stance_ratio=0.55)
@@ -73,9 +81,30 @@ def test_yaw_des_never_recentres():
     s.tick(period, turn=-1.0, period=period, stance_ratio=0.55)
     assert s.yaw_des < -0.25
     held = s.yaw_des
+    # Measured yaw moves opposite the turn command (wrong-way drift).
     s.update_pose(1.5 * period, yaw=0.10, base_xy=(0.0, 0.0))
     s.tick(1.5 * period, turn=-1.0, period=period, stance_ratio=0.55)
-    assert s.yaw_des < held
+    # May freeze at lead limit, but must never recentre toward measured yaw.
+    assert s.yaw_des <= held + 1e-12
+    assert s.yaw_des < s.yaw - 0.25
+
+
+def test_yaw_des_integrates_while_within_lead():
+    s = SpotYawStepper(
+        cfg=SpotYawStepConfig(yaw_step_rad=0.45, yaw_lead_max=0.5),
+        hip_xy=_hip,
+    )
+    period = 0.85
+    s.update_pose(0.0, yaw=0.0, base_xy=(0.0, 0.0))
+    s.tick(0.0, turn=-1.0, period=period, stance_ratio=0.55)
+    # Measured yaw tracks the command (more negative).
+    s.update_pose(0.5 * period, yaw=-0.10, base_xy=(0.0, 0.0))
+    s.tick(0.5 * period, turn=-1.0, period=period, stance_ratio=0.55)
+    mid = s.yaw_des
+    assert mid < -0.15
+    s.update_pose(period, yaw=-0.20, base_xy=(0.0, 0.0))
+    s.tick(period, turn=-1.0, period=period, stance_ratio=0.55)
+    assert s.yaw_des < mid
 
 
 def test_predict_force_scale_matches_diag():

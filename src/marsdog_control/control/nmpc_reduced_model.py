@@ -10,13 +10,14 @@ import pinocchio as pin
 
 
 def default_urdf_path() -> str:
-    """Repo-relative URDF: ``marsdogv3_*/marsdog/urdf/marsdog.urdf``."""
-    return os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "../../../../marsdog/urdf/marsdog.urdf",
-        )
-    )
+    """Repo-relative URDF: ``marsdog/urdf/marsdog.urdf``.
+
+    Prefer :mod:`marsdog_control.control.paths` as the shared helper; this
+    wrapper stays for historical imports from WBC / reduced-model callers.
+    """
+    from marsdog_control.control.paths import default_urdf_path as _shared
+
+    return _shared()
 
 
 # WBC / MIT 主动关节：四肢 only；前腿含主动 tarsus；后腿 tarsus 被动 mimic，不进 S。

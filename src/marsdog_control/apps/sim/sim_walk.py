@@ -129,19 +129,19 @@ class SimClock(ClockLike):
 def make_controllers(args, startup):
     from marsdog_control.runtime.walk_controllers import assemble_walk_control_stack
     stack = assemble_walk_control_stack(
-        args,
+        startup.build,
         natural_active=startup.natural_active,
-        natural_params=startup.natural_params,
-        gp_trot_threshold=0.3,
-        gp_deadzone=0.12,
+        soft_build=startup.soft_build,
+        walk_recipe=startup.walk_recipe,
+        jump_recipe=startup.jump_recipe,
         natural_soft=startup.natural_soft,
-        natural_walk=getattr(startup, "natural_walk", False),
-        walk_params=getattr(startup, "walk_params", None),
-        natural_jump=getattr(startup, "natural_jump", False),
-        jump_params=getattr(startup, "jump_params", None),
+        natural_walk=startup.natural_walk,
+        natural_jump=startup.natural_jump,
         trot_flag=startup.trot_flag,
         no_spine=startup.no_spine,
-        load_trim_cal=lambda: None
+        load_trim_cal=lambda: None,
+        lateral_planner=startup.lateral_planner,
+        attitude_gate=startup.attitude_gate,
     )
     return stack
 
@@ -263,7 +263,12 @@ def main():
 
     runtime_state = WalkRuntimeState()
     startup = _prepare_walk_startup(
-        args, runtime_state=runtime_state, joint_gains=SIM_JOINT_GAINS)
+        args,
+        runtime_state=runtime_state,
+        joint_gains=SIM_JOINT_GAINS,
+        gp_trot_threshold=0.3,
+        gp_deadzone=0.12,
+    )
     print(
         "[Sim] using SIM_JOINT_GAINS (SI impedance; real Incos load gains not applied)"
     )

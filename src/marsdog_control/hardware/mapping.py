@@ -70,6 +70,8 @@ def build_board_command_batches(
     kd_lz: float = DEFAULT_LZ_KD,
     kp_evo: float = DEFAULT_EVO_KP,
     kd_evo: float = DEFAULT_EVO_KD,
+    kp_incos: Optional[float] = None,
+    kd_incos: Optional[float] = None,
     kp_dm: Optional[float] = None,
     kd_dm: Optional[float] = None,
     velocities: Optional[Mapping[int, float]] = None,
@@ -81,6 +83,11 @@ def build_board_command_batches(
 
     ``rt`` is intentionally duck-typed so the legacy ``ActuationRuntime`` can
     remain the caller-side snapshot of mutable runtime knobs.
+
+    When ``use_joint_gains`` is False, brand MIT channels (``kp_lz`` / ``kp_evo`` /
+    ``kp_incos``) are applied directly. Soft-disable must pass zeros on lz/evo/
+    IncOS/DM so every bus ramps to rest; omit ``kp_incos`` only when IncOS
+    should share the evo fade channel (``resolve_gains``).
     """
     out = BoardCommandBatches()
     velocities = velocities or {}
@@ -134,7 +141,8 @@ def build_board_command_batches(
             kp, kd, tau = resolve_gains(
                 j, kp_scale, use_joint_gains,
                 kp_lz, kd_lz, kp_evo, kd_evo,
-                rt.leg_kp_scale, rt.joint_gains, ps, to)
+                rt.leg_kp_scale, rt.joint_gains, ps, to,
+                kp_incos=kp_incos, kd_incos=kd_incos)
             q = targets[mid]
             dq = velocities.get(mid, 0.0)
             batch.append(mid, q, dq, kp, kd, tau)

@@ -14,11 +14,15 @@ import os
 import sys
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-for _p in (_ROOT, os.path.join(_ROOT, "src"), os.path.join(_ROOT, "mocap_to_real")):
+for _p in (_ROOT, os.path.join(_ROOT, "src"), os.path.join(_ROOT, "mocap_to_real"),
+           os.path.join(_ROOT, "legacy", "mocap_to_real")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from joint_config import JOINT_MAP  # noqa: E402
+try:
+    from marsdog_control.config.joints import JOINT_MAP  # noqa: E402
+except ImportError:  # pragma: no cover - legacy shim path
+    from joint_config import JOINT_MAP  # noqa: E402
 
 _N = max(j.motor_id for j in JOINT_MAP) + 2  # +2 slack for 1-based indexing
 

@@ -7,15 +7,15 @@ import math
 import unittest
 from types import SimpleNamespace
 
-from marsdog_control.config.joints import JOINT_BY_ID
-from marsdog_control.core.types import (Direction, MotionTarget, RobotMode, RobotState,
+from joint_config import JOINT_BY_ID
+from robot_types import (Direction, MotionTarget, RobotMode, RobotState,
                          UserCommand)
-from marsdog_control.runtime.fsm import RuntimeStateMachine
-from marsdog_control.safety.supervisor import SafetySupervisor
+from runtime_fsm import RuntimeStateMachine
+from safety_supervisor import SafetySupervisor
 from marsdog_control.hardware.diagnostics import find_lz_recoverable_faults
 from marsdog_control.input.user_input import poll_user_command
 import walk
-import marsdog_control.motion.kinematics as kinematics
+import kinematics
 
 
 class _FakeGamepad:
@@ -214,7 +214,7 @@ class TestStandingPoseIsNew(unittest.TestCase):
         self.assertEqual(old_alias, new_pose)
 
     def test_stand_controller_defaults_to_new_tarsus_pose(self):
-        from marsdog_control.motion.gait_controller import StandController
+        from gait_controller import StandController
         stand = StandController(body_height=0.24)
         self.assertTrue(stand.use_tarsus)               # 默认即新站姿, 不再退回老姿态
         tgt = stand.get_targets(0)

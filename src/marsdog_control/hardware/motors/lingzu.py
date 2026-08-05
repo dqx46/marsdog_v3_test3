@@ -28,12 +28,7 @@ try:
 except ImportError:
     _pycan = None  # SocketCAN 模式不可用，但 USB-CAN 串口模式仍正常工作
 
-# [解耦] 真实实现已下沉到此 src 模块; 保持逐字一致的扁平 import, 由
-# ensure_legacy_path() 保证 can_serial/joint_config 可解析(其 compat 别名回指 src)。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
 from marsdog_control.compat import legacy_dir as _legacy_dir
-_ensure_legacy_path()
-
 from marsdog_control.hardware.motors.can_serial import CanSerial
 
 MAX_ID = 24

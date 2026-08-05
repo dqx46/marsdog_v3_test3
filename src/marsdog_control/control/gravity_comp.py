@@ -29,11 +29,6 @@
 
 import math
 
-# [解耦] 真实实现已下沉到此 src 模块; 函数内的扁平 import (import kinematics as K)
-# 由 ensure_legacy_path() 保证可解析。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
-_ensure_legacy_path()
-
 G = 9.81  # m/s^2
 
 # ── 连杆质量 (kg, 取自 URDF) ────────────────────────────────────────────────

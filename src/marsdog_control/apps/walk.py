@@ -29,9 +29,8 @@ import math
 import os
 import time
 
-from marsdog_control.compat import ensure_legacy_path, legacy_dir
+from marsdog_control.compat import legacy_dir
 
-ensure_legacy_path()
 _APP_RESOURCE_DIR = str(legacy_dir())
 
 from marsdog_control.hardware.motors.lingzu import MotorLz
@@ -296,6 +295,8 @@ def main(args=None):
         args,
         runtime_state=_ensure_runtime(),
         joint_gains=JOINT_GAINS,
+        gp_trot_threshold=GP_TROT_THRESHOLD,
+        gp_deadzone=GP_DEADZONE,
     )
     if startup is None:
         return
@@ -400,19 +401,19 @@ def main(args=None):
 
     # ── 步态 / FSM / Safety / IMU（runtime/walk_controllers 工厂）──────────
     stack = assemble_walk_control_stack(
-        args,
+        startup.build,
         natural_active=startup.natural_active,
-        natural_params=startup.natural_params,
-        gp_trot_threshold=GP_TROT_THRESHOLD,
-        gp_deadzone=GP_DEADZONE,
+        soft_build=startup.soft_build,
+        walk_recipe=startup.walk_recipe,
+        jump_recipe=startup.jump_recipe,
         natural_soft=startup.natural_soft,
-        natural_walk=getattr(startup, "natural_walk", False),
-        walk_params=getattr(startup, "walk_params", None),
-        natural_jump=getattr(startup, "natural_jump", False),
-        jump_params=getattr(startup, "jump_params", None),
+        natural_walk=startup.natural_walk,
+        natural_jump=startup.natural_jump,
         trot_flag=startup.trot_flag,
         no_spine=startup.no_spine,
         load_trim_cal=_load_trim,
+        lateral_planner=startup.lateral_planner,
+        attitude_gate=startup.attitude_gate,
     )
     stand = stack.stand
 

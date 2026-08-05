@@ -10,12 +10,7 @@ import struct
 import threading
 import time
 
-# [解耦] 真实实现已下沉到此 src 模块; 保持逐字一致的扁平 import(serial 本地垫片 +
-# bus_config), 由 ensure_legacy_path() 把 mocap_to_real 置于 sys.path 前部保证解析。
-from marsdog_control.compat import ensure_legacy_path as _ensure_legacy_path
-_ensure_legacy_path()
-
-import serial
+from marsdog_control.hardware.serial_io import serial
 
 from marsdog_control.config.bus_config import TAIL_485_DEVICE
 

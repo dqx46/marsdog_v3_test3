@@ -45,6 +45,22 @@ def assemble_walk_loop_context(
     balance softstart/phase-gate knobs, ff_decouple/auto_trim/ramp) comes from
     the single ``startup`` bundle — this function never reads ``args``.
     """
+    from marsdog_control.config.control_policies import (
+        ControlPolicyError, ForceMode,
+    )
+    from marsdog_control.motion.attitude_overlay import (
+        AttitudeOverlayGate, bind_ownership,
+    )
+    from marsdog_control.motion.lateral_planner import LateralPlanner
+
+    session = getattr(startup, "session", None)
+    policies = getattr(session, "policies", None) if session is not None else None
+    if policies is None:
+        raise ControlPolicyError(
+            "assemble_walk_loop_context requires WalkSessionConfig.policies "
+            "(no silent default ownership)"
+        )
+
     joint_direction_test = startup.joint_direction_test
     hip_abd_test = startup.hip_abd_test
     leg_pitch_test = startup.leg_pitch_test
@@ -80,20 +96,47 @@ def assemble_walk_loop_context(
 
     imp = runtime_state.impedance
     rt_cfg = getattr(startup, "runtime_config", None)
+    force_mode = policies.force
+    # Prefer session handles from prepare_walk_startup / control stack.
+    lateral_planner = getattr(startup, "lateral_planner", None)
+    attitude_gate = getattr(startup, "attitude_gate", None)
+    if lateral_planner is None:
+        lateral_planner = LateralPlanner(session_owner=policies.lateral)
+    if attitude_gate is None:
+        attitude_gate = AttitudeOverlayGate(attitude=policies.attitude)
+    # Re-bind stand + FSM gaits to the same session planner/gate (idempotent
+    # if assemble_walk_control_stack already bound the same instances).
+    gait_handles = [stand]
+    for attr in (
+        "trot_fwd", "trot_bwd", "pace_fwd", "pace_bwd",
+        "nat_fwd", "nat_bwd", "walk_fwd", "walk_bwd", "jump_fwd",
+    ):
+        gait_handles.append(getattr(fsm, attr, None))
+    bind_ownership(
+        lateral_planner=lateral_planner,
+        attitude_gate=attitude_gate,
+        gaits=gait_handles,
+    )
+
     executor = CommandExecutor(
         config=ExecutorConfig(
             variable_impedance=imp.enabled,
             gravity_comp=runtime_state.gravity_comp,
-            vmc_enabled=runtime_state.vmc_enabled,
-            wbc_enabled=getattr(runtime_state, "wbc_enabled", False),
+            vmc_enabled=force_mode is ForceMode.VMC,
+            wbc_enabled=force_mode is ForceMode.WBC,
+            force_mode=force_mode,
             td_kp_scale=imp.td_kp_scale,
             swing_kp_scale=imp.swing_kp_scale,
             td_window=imp.td_window,
-            leg_kp_scale=runtime_state.leg_kp_scale,
+            leg_kp_scale=policies.impedance.effective_leg_kp_scale(),
             gravity_scale=runtime_state.gravity_scale,
         ),
         runtime_config=rt_cfg,
+        lateral_planner=lateral_planner,
     )
+    # ff_decouple only meaningful with IMU attitude owner.
+    ff_decouple = bool(startup.ff_decouple) and bool(
+        attitude_gate.allows_ff_decouple())
     balance_runtime = RuntimeBalanceController(
         imu_ctrl,
         RuntimeBalanceConfig(
@@ -106,7 +149,7 @@ def assemble_walk_loop_context(
             variable_impedance=imp.enabled,
             td_imu_freeze_i=startup.td_imu_freeze_i,
             imu_slew_m_s=startup.imu_slew_m_s,
-            ff_decouple=startup.ff_decouple,
+            ff_decouple=ff_decouple,
             auto_trim=startup.auto_trim,
             ramp_s=startup.ramp_s,
         ),
@@ -140,6 +183,8 @@ def assemble_walk_loop_context(
         joint_map=joint_map,
         control_hz=control_hz,
         clock=clock,
+        policies=policies,
+        lateral_planner=lateral_planner,
     )
 
 

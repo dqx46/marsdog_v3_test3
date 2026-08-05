@@ -74,6 +74,25 @@ def test_schedule_turn_and_reverse():
     assert abs(right.vel_cmd[2] - 0.2) < 1e-9
     assert back.amp_front < 0
     assert back.vel_cmd[0] < 0
+    # BWD swaps ends: |amp_front| tracks envelope rear max (and vice versa).
+    assert abs(abs(back.amp_front) - _env().amp_rear_max * back.speed_frac) < 1e-9
+    assert abs(abs(back.amp_rear) - _env().amp_front_max * back.speed_frac) < 1e-9
+
+
+def test_schedule_bwd_amp_scale_and_optional_no_swap():
+    env = _env(bwd_amp_scale=0.7, bwd_swap_ends=True)
+    sch = SoftTrotSchedule(env)
+    vmax = sch.max_forward_vx()
+    back = sch.map(VelocityCommand(vx=-vmax))
+    assert abs(abs(back.amp_front) - env.amp_rear_max * 0.7) < 1e-9
+    assert abs(abs(back.amp_rear) - env.amp_front_max * 0.7) < 1e-9
+    fwd = sch.map(VelocityCommand(vx=vmax))
+    assert abs(abs(fwd.amp_front) - env.amp_front_max) < 1e-9
+
+    noswap = SoftTrotSchedule(_env(bwd_swap_ends=False, bwd_amp_scale=0.5))
+    b2 = noswap.map(VelocityCommand(vx=-noswap.max_forward_vx()))
+    assert abs(abs(b2.amp_front) - 0.032 * 0.5) < 1e-9
+    assert abs(abs(b2.amp_rear) - 0.036 * 0.5) < 1e-9
 
 
 def test_apply_schedule_sets_vel_cmd():

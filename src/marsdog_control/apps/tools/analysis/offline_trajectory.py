@@ -24,9 +24,7 @@ for path in (PROJECT_ROOT, TESTS_PARITY, SRC_DIR, PROJECT_ROOT / "mocap_to_real"
         sys.path.insert(0, p)
 
 from loop_harness import run_legacy_loop  # noqa: E402
-from marsdog_control.compat import ensure_legacy_path  # noqa: E402
 
-ensure_legacy_path()
 from marsdog_control.config.joints import JOINT_BY_ID  # noqa: E402
 
 
