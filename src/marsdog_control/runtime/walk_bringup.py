@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Sequence
 
 from marsdog_control.hardware.board import MotorBoard
+from marsdog_control.hardware.mapping import dm_wire_gains, hold_dm_at
 from marsdog_control.safety.fault_policy import classify_motor_fault
 
 
@@ -57,11 +58,14 @@ class _HotStartHold:
         self._lz = None
         self._evo = None
         self._incos = None
+        self._dm = None
+        self._dm_targets: dict = {}
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
 
-    def bind(self, *, lz=None, evo=None, incos=None) -> None:
+    def bind(self, *, lz=None, evo=None, incos=None, dm=None,
+             dm_targets=None) -> None:
         with self._lock:
             if lz is not None:
                 self._lz = lz
@@ -69,6 +73,10 @@ class _HotStartHold:
                 self._evo = evo
             if incos is not None:
                 self._incos = incos
+            if dm is not None:
+                self._dm = dm
+            if dm_targets is not None:
+                self._dm_targets = dm_targets
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -98,7 +106,8 @@ class _HotStartHold:
 
     def _tick(self) -> None:
         with self._lock:
-            lz, evo, incos = self._lz, self._evo, self._incos
+            lz, evo, incos, dm, dm_targets = (
+                self._lz, self._evo, self._incos, self._dm, self._dm_targets)
         if lz is not None:
             try:
                 lz.hold_connected(self._gains)
@@ -130,6 +139,11 @@ class _HotStartHold:
                     incos.mit_control(j.motor_id, float(q), 0.0, kp, kd, tau)
                 except Exception:
                     pass
+        if dm is not None and dm_targets:
+            try:
+                hold_dm_at(dm, self._joint_map, dm_targets)
+            except Exception:
+                pass
 
 
 def bringup_imu(
@@ -268,9 +282,16 @@ def bringup_motors_and_board(
             if dm_online:
                 dm_fixed_targets[mid] = dm_pos
                 dm.enable(mid)
+                # probe 用 disable 读角：enable 后立刻 MIT 锁在探测角，避免空窗乱动。
+                kp, kd, tau = dm_wire_gains(j)
+                dm.control_mit(mid, kp, kd, float(dm_pos), 0.0, tau)
                 clock.sleep(0.02)
         dm.start_worker()
-        print("  [DM] 持久化严格串行收发 worker 已启动（主循环不等待 ACK）")
+        hold_dm_at(dm, joint_map, dm_fixed_targets)
+        if holder is not None:
+            holder.bind(dm=dm, dm_targets=dm_fixed_targets)
+            holder.kick()
+        print("  [DM] 持久化严格串行收发 worker 已启动（主循环不等待 ACK；已 MIT 保位）")
     else:
         print(f"  [WARNING] {dm_can_device} 打开失败, 达妙 tarsus 本次不可用")
         dm = None
@@ -385,8 +406,18 @@ def _seed_hot_start_hold(lz, evo, dm, incos, board) -> None:
             elif j.mtype == "incos" and incos is not None:
                 incos.mit_control(mid, float(q), 0.0, kp, kd, tau)
             elif j.mtype == "dm" and dm is not None:
-                # Keep probed pose; worker already has enable.
+                # Batch below via hold_dm_at (needs /N² wire gains).
                 pass
+        except Exception:
+            pass
+    if dm is not None:
+        try:
+            dm_targets = {
+                mid: float(q) for mid, q in cur.items()
+                if JOINT_BY_ID.get(mid) is not None
+                and JOINT_BY_ID[mid].mtype == "dm"
+            }
+            hold_dm_at(dm, JOINT_BY_ID.values(), dm_targets)
         except Exception:
             pass
     print("[init] hot-start 保位已刷一帧（全刚度）")

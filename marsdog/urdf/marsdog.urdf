@@ -2617,11 +2617,11 @@
     </visual>
     <collision>
       <origin
-        xyz="0 -0.003688 -0.020942"
+        xyz="0 -0.003688 -0.025302"
         rpy="0 0 0" />
       <geometry>
         <cylinder
-          length="0.052"
+          length="0.063"
           radius="0.018" />
       </geometry>
     </collision>
@@ -2688,7 +2688,7 @@
     name="fl_foot_joint"
     type="fixed">
     <origin
-      xyz="0 -0.005449 -0.051948"
+      xyz="0 -0.005449 -0.06276391"
       rpy="0 0 0" />
     <parent
       link="fl_tarsus_link" />
@@ -2915,11 +2915,11 @@
     </visual>
     <collision>
       <origin
-        xyz="0 0.003832 -0.020935"
+        xyz="0 0.003832 -0.025296"
         rpy="0 0 0" />
       <geometry>
         <cylinder
-          length="0.052"
+          length="0.063"
           radius="0.018" />
       </geometry>
     </collision>
@@ -2986,7 +2986,7 @@
     name="fr_foot_joint"
     type="fixed">
     <origin
-      xyz="0 0.0055908 -0.051933"
+      xyz="0 0.0055908 -0.06275144"
       rpy="0 0 0" />
     <parent
       link="fr_tarsus_link" />

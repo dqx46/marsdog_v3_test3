@@ -90,8 +90,8 @@ def _front_chain(q_hp, q_calf):
     cx, cz = _ry(th_tar, 0.0, -0.026597)
     tar = (_M_F_TAR, tjx + cx)
 
-    # foot (在 tarsus link 系)
-    fx, fz = _ry(th_tar, 0.0, -0.051948)
+    # foot (在 tarsus link 系); 前腿 |foot|=63mm，仅加高 Z
+    fx, fz = _ry(th_tar, 0.0, -0.062764)
     foot_x, foot_z = tjx + fx, tjz + fz
 
     return [hp, tr, calf, tar], cjx, foot_x, foot_z

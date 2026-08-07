@@ -48,8 +48,8 @@ JOINT_GAINS = {
     "fl_thigh_roll": {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.0},
     "fr_thigh_roll": {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.0},
     # Incos 前小腿 (IDs 3/7): 仍为最大 |err|
-    "fl_calf":       {"kp": 75.0,  "kd": 3.2, "trq_ff": 0.35},
-    "fr_calf":       {"kp": 75.0,  "kd": 3.2, "trq_ff": 0.35},
+    "fl_calf":       {"kp": 75.0,  "kd": 3.2, "trq_ff": 0.0},
+    "fr_calf":       {"kp": 75.0,  "kd": 3.2, "trq_ff": 0.0},
     # 达妙 tarsus：DM_S2325 KD_MAX=5（旧表 kd=10 会被钳到 5）
     "fl_tarsus":     {"kp": 220.0, "kd": 5.0, "trq_ff": 0.0},
     "fr_tarsus":     {"kp": 220.0, "kd": 5.0, "trq_ff": 0.0},
@@ -65,8 +65,8 @@ JOINT_GAINS = {
     "head_yaw":      {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
     "head_roll":     {"kp": 30.0,  "kd": 3.0, "trq_ff": 0.0},
     "neck_pitch":    {"kp": 30.0,  "kd": 5.0, "trq_ff": 0.0},
-    "waist_yaw":     {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
-    "waist_pitch":   {"kp": 60.0,  "kd": 5.0, "trq_ff": 0.0},
+    "waist_yaw":     {"kp": 80.0,  "kd": 5.0, "trq_ff": 0.0},
+    "waist_pitch":   {"kp": 110.0,  "kd": 5.0, "trq_ff": 0.0},
     "waist_roll":    {"kp": 130.0,  "kd": 5.0, "trq_ff": 0.0},  # LZ KD_MAX=5
 }
 

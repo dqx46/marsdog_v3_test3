@@ -97,6 +97,7 @@ class RkMotorBoard:
             self.incos = None
 
         if self.options.include_dm:
+            from marsdog_control.hardware.mapping import dm_wire_gains, hold_dm_at
             dm = MotorDamiao()
             if dm.begin(self.devices.dm_can, self.devices.baud):
                 time.sleep(1.5)
@@ -107,8 +108,14 @@ class RkMotorBoard:
                     if online:
                         self.dm_fixed_targets[mid] = pos
                         dm.enable(mid)
+                        j = JOINT_BY_ID.get(mid)
+                        if j is not None:
+                            kp, kd, tau = dm_wire_gains(j)
+                            dm.control_mit(mid, kp, kd, float(pos), 0.0, tau)
                         time.sleep(0.02)
                 dm.start_worker()
+                if self.dm_fixed_targets:
+                    hold_dm_at(dm, JOINT_MAP, self.dm_fixed_targets)
                 self.dm = dm
 
         for joint in JOINT_MAP:

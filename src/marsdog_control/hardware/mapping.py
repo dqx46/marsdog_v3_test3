@@ -8,7 +8,7 @@ Board can talk to concrete motor drivers.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Optional
+from typing import Iterable, Mapping, Optional
 
 from marsdog_control.config.joints import (
     DEFAULT_EVO_KD,
@@ -27,6 +27,45 @@ SERIAL_JOINTS = [j for j in JOINT_MAP if j.mtype == "lz" and j.bus == "lz_can_b"
 EVO_JOINTS = [j for j in JOINT_MAP if j.mtype == "evo"]
 DM_JOINTS = [j for j in JOINT_MAP if j.mtype == "dm"]
 INCOS_JOINTS = [j for j in JOINT_MAP if j.mtype == "incos"]
+
+
+def dm_wire_gains(joint) -> tuple[float, float, float]:
+    """JOINT_GAINS (关节空间) → 达妙线端 kp/kd（外置减速 /N²，与 batch 路径同源）。"""
+    from marsdog_control.config.gains import BRAND_GAIN_SCALE, JOINT_GAINS
+    g = JOINT_GAINS.get(joint.name, {})
+    sc = BRAND_GAIN_SCALE.get("dm", {"kp": 1.0, "kd": 1.0})
+    kp = float(g.get("kp", 30.0)) * float(sc.get("kp", 1.0))
+    kd = float(g.get("kd", 0.5)) * float(sc.get("kd", 1.0))
+    tau = float(g.get("trq_ff", 0.0))
+    gr = float(getattr(joint, "gear_ratio", 1.0) or 1.0)
+    gr2 = gr * gr if gr != 0.0 else 1.0
+    return kp / gr2, kd / gr2, tau
+
+
+def hold_dm_at(dm, joint_map: Iterable, targets: Mapping[int, float]) -> None:
+    """在探测角上 MIT 保位（历史安全模式，见 ``bench_dm_latency``）。
+
+    ``probe()`` 用 disable(0xFD) 读遥测；仅 ``enable`` 而不立刻 MIT 会让达妙
+    处于「已使能但未锁」——起立 fade 前空窗表现为乱动。
+    """
+    if dm is None or not targets:
+        return
+    cmds = {}
+    for j in joint_map:
+        if getattr(j, "mtype", None) != "dm":
+            continue
+        mid = j.motor_id
+        if mid not in targets:
+            continue
+        kp, kd, tau = dm_wire_gains(j)
+        cmds[mid] = (kp, kd, float(targets[mid]), 0.0, tau)
+    if not cmds:
+        return
+    if getattr(dm, "worker_running", False):
+        dm.set_commands(cmds)
+    else:
+        for mid, (kp, kd, q, dq, tau) in cmds.items():
+            dm.control_mit(mid, kp, kd, q, dq, tau)
 
 
 @dataclass
@@ -157,4 +196,6 @@ __all__ = [
     "MitBatch",
     "BoardCommandBatches",
     "build_board_command_batches",
+    "dm_wire_gains",
+    "hold_dm_at",
 ]
