@@ -91,6 +91,7 @@ class GaitStackConfig:
 
     height: float
     x_shift: float
+    y_shift: float
     hip_abd: float
     waist_pitch: float
     waist_yaw_offset: float
@@ -160,6 +161,7 @@ class GaitStackConfig:
         return cls(
             height=float(args.height),
             x_shift=float(_g(args, "x_shift", GAIT.x_shift)),
+            y_shift=float(_g(args, "y_shift", GAIT.y_shift)),
             hip_abd=float(args.hip_abd),
             waist_pitch=float(_g(args, "waist_pitch", GAIT.waist_pitch)),
             waist_yaw_offset=float(_g(

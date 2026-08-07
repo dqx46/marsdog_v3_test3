@@ -106,6 +106,29 @@ def joint_gains_for(backend: str = "real") -> Dict[str, Dict[str, float]]:
     return JOINT_GAINS
 
 
+# SoftTrot / run_walk default overlay (schema.control.leg_kp_scale).
+WALK_LEG_KP_SCALE: float = 0.90
+
+
+def static_trq_ff_by_id(
+    joint_gains: Mapping[str, Mapping[str, float]] | None = None,
+) -> Dict[int, float]:
+    """motor_id → URDF-space static ``trq_ff`` from the gain table.
+
+    Same values ``resolve_gains`` uses when gravity/VMC/WBC do not override.
+    """
+    from marsdog_control.config.joints import JOINT_MAP
+
+    table = joint_gains if joint_gains is not None else JOINT_GAINS
+    out: Dict[int, float] = {}
+    for j in JOINT_MAP:
+        g = table.get(j.name) or {}
+        tau = float(g.get("trq_ff", 0.0) or 0.0)
+        if abs(tau) > 1e-12:
+            out[int(j.motor_id)] = tau
+    return out
+
+
 def brand_scales(mtype: str,
                  table: Mapping[str, Mapping[str, float]] | None = None,
                  ) -> Dict[str, float]:
@@ -129,7 +152,9 @@ __all__ = [
     "BRAND_DEFAULT_GAINS",
     "JOINT_GAINS",
     "SIM_JOINT_GAINS",
+    "WALK_LEG_KP_SCALE",
     "brand_scales",
     "joint_gains_for",
     "set_brand_kp_scale",
+    "static_trq_ff_by_id",
 ]

@@ -82,6 +82,7 @@ class WalkStartupContext:
     calf_pitch_test_amp_rad: float
     front_foot_track_deg: float
     x_shift: float
+    y_shift: float
     capture_lie_pose: bool
     logging_enabled: bool
     gamepad_enabled: bool
@@ -461,6 +462,7 @@ def prepare_walk_startup(
         front_foot_track_deg=float(getattr(
             args, "front_foot_track_deg", GAIT.front_foot_track_deg)),
         x_shift=float(getattr(args, "x_shift", GAIT.x_shift)),
+        y_shift=float(getattr(args, "y_shift", GAIT.y_shift)),
         capture_lie_pose=bool(devtools.capture_lie_pose),
         logging_enabled=features.logging_enabled,
         gamepad_enabled=gamepad_enabled,

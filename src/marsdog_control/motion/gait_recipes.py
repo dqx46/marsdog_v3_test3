@@ -31,6 +31,8 @@ class StandingPoseConfig:
     waist_yaw_offset: float = 0.0
     front_stand_foot_pitch_deg: Optional[float] = None
     front_stand_tarsus_deg: float = 0.0
+    # Body-frame foot Y (+left); same as walk --y-shift / BalanceStandPlanner.
+    y_offset: float = 0.0
 
     # 2026-07-11: 唯一站姿=新三连杆带前腿主动 tarsus 站姿, 脚段默认 -90°(竖直指地)。
     _DEFAULT_FOOT_PITCH_DEG = -90.0
@@ -52,6 +54,7 @@ class StandingPoseConfig:
             waist_yaw_offset=cfg.waist_yaw_offset,
             front_stand_foot_pitch_deg=foot_pitch_deg,
             front_stand_tarsus_deg=cfg.front_stand_tarsus_deg,
+            y_offset=float(getattr(cfg, "y_shift", 0.0) or 0.0),
         )
 
     @classmethod
@@ -76,6 +79,7 @@ class StandingPoseConfig:
             use_tarsus=self.use_tarsus,
             front_stand_tarsus_deg=self.front_stand_tarsus_deg,
             front_stand_foot_pitch_deg=self.front_stand_foot_pitch_deg,
+            y_offset=self.y_offset,
         )
         stand.waist_pitch_offset = self.waist_pitch_offset
         stand.waist_yaw_offset = self.waist_yaw_offset
@@ -147,6 +151,7 @@ def build_controller_set(
     stand_cfg = StandingPoseConfig.from_config(cfg, front_x0=front_x0, rear_x0=rear_x0)
     xf = stand_cfg.x_offset_front
     xr = stand_cfg.x_offset_rear
+    y_off = float(stand_cfg.y_offset)
 
     bwd_scale = cfg.bwd_amp_scale
     if cfg.fwd_use_bwd:
@@ -190,6 +195,7 @@ def build_controller_set(
         swing_clearance_per_rad=cfg.swing_clearance_per_rad,
         x_offset_front=xf,
         x_offset_rear=xr,
+        y_offset=y_off,
         anti_roll=cfg.anti_roll,
         trot_roll_ff_neg_deg=cfg.trot_roll_ff_neg_deg,
         trot_roll_ff_pos_deg=cfg.trot_roll_ff_pos_deg,
@@ -229,7 +235,7 @@ def build_controller_set(
         lateral_sway=cfg.pace_sway,
     )
     if pace_use_stand_offsets:
-        pace_common.update(x_offset_front=xf, x_offset_rear=xr)
+        pace_common.update(x_offset_front=xf, x_offset_rear=xr, y_offset=y_off)
     pace_fwd = StablePace(amp_front=cfg.pace_amp, amp_rear=cfg.pace_amp, **pace_common)
     pace_bwd = StablePace(amp_front=-cfg.pace_amp, amp_rear=-cfg.pace_amp, **pace_common)
 
@@ -395,6 +401,7 @@ def build_controller_set(
         body_height=float(jp.get("height", common["body_height"])),
         x_offset_front=common["x_offset_front"],
         x_offset_rear=common["x_offset_rear"],
+        y_offset=common.get("y_offset", 0.0),
         hip_abduction=fwd_hip_abd,
         front_stand_tarsus_deg=common.get("front_stand_tarsus_deg", 0.0),
         front_stand_foot_pitch_deg=jp.get(

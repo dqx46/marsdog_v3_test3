@@ -33,7 +33,10 @@ class GaitCliDefaults:
 
     # stand / geometry
     # 2026-08-04 真机试走：x_shift=0（不前后偏置）；左右用 com_shift=4mm
+    # x/y_shift: 四脚落脚点整体偏移 (m); 正 x=脚向前, 正 y=脚向左(+Y)
+    # 与 sim_com_balance / BalanceStandPlanner 同符号，可直接互抄。
     x_shift: float = 0.0
+    y_shift: float = 0.0
     waist_pitch: float = 0.05
     waist_yaw_offset: float = 0.0
     front_stand_foot_pitch_deg: float = -90.0

@@ -87,13 +87,28 @@ WALK_RECORDER_META = "walk_recoder.meta.json"
 
 def setup_log(enabled: bool, args=None, *, base_dir: str,
               runtime: Optional[LogRuntime] = None):
+    log_dir = os.path.join(base_dir, "log")
+    path = os.path.join(log_dir, WALK_RECORDER_CSV)
+    meta_path = os.path.join(log_dir, WALK_RECORDER_META)
+
+    # 无论是否本次写入，都打印固定日志路径，方便对照上机现象。
+    print(f"[log] CSV: {WALK_RECORDER_CSV}")
+    print(f"[log] 路径: {os.path.abspath(path)}")
+    if os.path.isfile(path):
+        try:
+            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+            print(f"[log] 已有文件 mtime={mtime.isoformat(timespec='seconds')}"
+                  + (" — 本次将覆盖" if enabled else " — 本次不写入(--no-log)"))
+        except OSError:
+            pass
+    elif not enabled:
+        print("[log] 本次未开启写入（需要轨迹请加 --log）")
+
     if not enabled:
         return None, None, None
-    log_dir = os.path.join(base_dir, "log")
+
     os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, WALK_RECORDER_CSV)
     if args is not None:
-        meta_path = os.path.join(log_dir, WALK_RECORDER_META)
         dm = {}
         if runtime is not None:
             dm = {
@@ -122,8 +137,7 @@ def setup_log(enabled: bool, args=None, *, base_dir: str,
     f = open(path, "w", newline="")
     w = csv.writer(f)
     w.writerow(LOG_HEADER)
-    print(f"[log] CSV: log/{os.path.basename(path)}  (每次 --log 覆盖)")
-    print(f"[log] 路径: {path}")
+    print(f"[log] 本次写入已开启（覆盖） meta={os.path.abspath(meta_path)}")
     return f, w, path
 
 
@@ -357,12 +371,189 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
         ])
 
 
+# ── CoM balance jitter CSV (sim_com_balance) ─────────────────────────────────
+# Long format (one row per joint per tick) so plot_tracking_mpl works with
+# ``--include-stand`` / ``--csv .../com_balance.csv``. Extra CoM/IMU columns
+# are ignored by the plotter but useful for shake diagnosis vs walk.
+
+COM_BALANCE_CSV = "com_balance.csv"
+COM_BALANCE_META = "com_balance.meta.json"
+
+COM_BALANCE_HEADER = [
+    "t_s", "run_t_s", "dt_ms", "tick",
+    "mode", "gait_active", "controller",
+    "x_shift_m", "y_shift_m", "support", "lift_z_m", "diag_lifted",
+    "gravity_on", "grav_scale",
+    "imu_roll_deg", "imu_pitch_deg", "imu_yaw_deg",
+    "imu_gyro_roll", "imu_gyro_pitch", "imu_gyro_yaw",
+    "motor_id", "name",
+    "target_deg", "actual_deg", "error_deg",
+    "vel_deg_s", "torque_nm", "trq_ff_nm",
+    "actual_kp", "actual_kd",
+]
+
+
+def setup_com_balance_log(
+    enabled: bool,
+    *,
+    base_dir: str,
+    meta: Optional[dict] = None,
+):
+    """Open ``log/com_balance.csv`` (overwrite). Returns (file, writer, path) or Nones."""
+    log_dir = os.path.join(base_dir, "log")
+    path = os.path.join(log_dir, COM_BALANCE_CSV)
+    meta_path = os.path.join(log_dir, COM_BALANCE_META)
+
+    print(f"[log] CSV: {COM_BALANCE_CSV}")
+    print(f"[log] 路径: {os.path.abspath(path)}")
+    if os.path.isfile(path):
+        try:
+            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(path))
+            print(
+                f"[log] 已有文件 mtime={mtime.isoformat(timespec='seconds')}"
+                + (" — 本次将覆盖" if enabled else " — 本次不写入(--no-log)")
+            )
+        except OSError:
+            pass
+    elif not enabled:
+        print("[log] 本次未开启写入（需要抖动分析请去掉 --no-log）")
+
+    if not enabled:
+        return None, None, None
+
+    os.makedirs(log_dir, exist_ok=True)
+    payload = {
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "argv": list(sys.argv),
+        "purpose": "sim_com_balance jitter / tracking vs SoftTrot stand",
+    }
+    if meta:
+        payload.update(meta)
+    with open(meta_path, "w") as meta_file:
+        json.dump(payload, meta_file, ensure_ascii=False, indent=2)
+    f = open(path, "w", newline="")
+    w = csv.writer(f)
+    w.writerow(COM_BALANCE_HEADER)
+    print(f"[log] 本次写入已开启（覆盖） meta={os.path.abspath(meta_path)}")
+    return f, w, path
+
+
+def write_com_balance_row(
+    writer,
+    *,
+    joints: Sequence,
+    targets: dict,
+    measured: Optional[dict],
+    measured_vel: Optional[dict] = None,
+    torque_by_id: Optional[dict] = None,
+    trq_ff: Optional[dict] = None,
+    joint_gains: Optional[dict] = None,
+    t_s: float = 0.0,
+    run_t_s: float = 0.0,
+    dt_ms: float = 0.0,
+    tick: int = 0,
+    x_shift_m: float = 0.0,
+    y_shift_m: float = 0.0,
+    # back-compat aliases (old body-CoM names; ignored if x/y_shift given)
+    com_x_m: float | None = None,
+    com_y_m: float | None = None,
+    support: str = "quad",
+    lift_z_m: float = 0.0,
+    diag_lifted: bool = False,
+    gravity_on: bool = False,
+    grav_scale: float = 1.0,
+    imu_roll: float = float("nan"),
+    imu_pitch: float = float("nan"),
+    imu_yaw: float = float("nan"),
+    imu_gyro_roll: float = float("nan"),
+    imu_gyro_pitch: float = float("nan"),
+    imu_gyro_yaw: float = float("nan"),
+    controller: str = "sim_com_balance",
+):
+    """Append one long-format tick (N joint rows). Angles are URDF rad → deg."""
+    if writer is None:
+        return
+    measured = measured or {}
+    measured_vel = measured_vel or {}
+    torque_by_id = torque_by_id or {}
+    trq_ff = trq_ff or {}
+    joint_gains = joint_gains or {}
+
+    imu_roll_d = (
+        math.degrees(imu_roll) if math.isfinite(imu_roll) else float("nan")
+    )
+    imu_pitch_d = (
+        math.degrees(imu_pitch) if math.isfinite(imu_pitch) else float("nan")
+    )
+    imu_yaw_d = (
+        math.degrees(imu_yaw) if math.isfinite(imu_yaw) else float("nan")
+    )
+    # gyro already logged as deg/s in walk; keep rad/s → deg/s here for consistency
+    g_roll = (
+        math.degrees(imu_gyro_roll) if math.isfinite(imu_gyro_roll) else float("nan")
+    )
+    g_pitch = (
+        math.degrees(imu_gyro_pitch) if math.isfinite(imu_gyro_pitch) else float("nan")
+    )
+    g_yaw = (
+        math.degrees(imu_gyro_yaw) if math.isfinite(imu_gyro_yaw) else float("nan")
+    )
+
+    if com_x_m is not None:
+        x_shift_m = -float(com_x_m)
+    if com_y_m is not None:
+        y_shift_m = -float(com_y_m)
+
+    for j in joints:
+        mid = int(j.motor_id)
+        tgt = targets.get(mid, float("nan"))
+        act = measured.get(mid, float("nan"))
+        vel = measured_vel.get(mid, float("nan"))
+        tq = torque_by_id.get(mid, float("nan"))
+        ff = trq_ff.get(mid, float("nan"))
+        g = joint_gains.get(j.name, {})
+        kp = float(g.get("kp", float("nan")))
+        kd = float(g.get("kd", float("nan")))
+        err = (
+            math.degrees(act - tgt)
+            if math.isfinite(tgt) and math.isfinite(act)
+            else float("nan")
+        )
+        writer.writerow([
+            f"{t_s:.4f}", f"{run_t_s:.4f}", f"{dt_ms:.2f}", int(tick),
+            "com_balance", 0, controller,
+            f"{x_shift_m:.5f}", f"{y_shift_m:.5f}", support, f"{lift_z_m:.4f}",
+            int(bool(diag_lifted)),
+            int(bool(gravity_on)), f"{grav_scale:.3f}",
+            f"{imu_roll_d:.3f}" if math.isfinite(imu_roll_d) else "nan",
+            f"{imu_pitch_d:.3f}" if math.isfinite(imu_pitch_d) else "nan",
+            f"{imu_yaw_d:.3f}" if math.isfinite(imu_yaw_d) else "nan",
+            f"{g_roll:.3f}" if math.isfinite(g_roll) else "nan",
+            f"{g_pitch:.3f}" if math.isfinite(g_pitch) else "nan",
+            f"{g_yaw:.3f}" if math.isfinite(g_yaw) else "nan",
+            mid, j.name,
+            f"{math.degrees(tgt):.4f}" if math.isfinite(tgt) else "nan",
+            f"{math.degrees(act):.4f}" if math.isfinite(act) else "nan",
+            f"{err:.4f}" if math.isfinite(err) else "nan",
+            f"{math.degrees(vel):.3f}" if math.isfinite(vel) else "nan",
+            f"{tq:.4f}" if math.isfinite(tq) else "nan",
+            f"{ff:.4f}" if math.isfinite(ff) else "nan",
+            f"{kp:.2f}" if math.isfinite(kp) else "nan",
+            f"{kd:.2f}" if math.isfinite(kd) else "nan",
+        ])
+
+
 __all__ = [
     "LOG_HEADER",
     "WALK_RECORDER_CSV",
     "WALK_RECORDER_META",
+    "COM_BALANCE_CSV",
+    "COM_BALANCE_META",
+    "COM_BALANCE_HEADER",
     "LogRuntime",
     "WriteLogRuntime",
     "setup_log",
     "write_log",
+    "setup_com_balance_log",
+    "write_com_balance_row",
 ]

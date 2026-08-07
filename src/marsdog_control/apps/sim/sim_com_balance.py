@@ -9,6 +9,16 @@ Real robot::
 
     PYTHONPATH=src python -m marsdog_control.apps.sim.sim_com_balance --real
     PYTHONPATH=src python -m marsdog_control.apps.sim.sim_com_balance --real --allow-lift
+
+Gains match ``run_walk`` SoftTrot: ``JOINT_GAINS × leg_kp_scale`` plus
+``gravity_comp`` / static ``trq_ff`` (schema defaults). Pass ``--no-gravity-comp``
+to drop τ_g and keep table ``trq_ff`` only.
+
+CSV jitter log (default ON → ``mocap_to_real/log/com_balance.csv``)::
+
+    # disable: --no-log   |  downsample: --csv-hz 50
+    python -m marsdog_control.apps.tools.analysis.plot_tracking_mpl \\
+        mocap_to_real/log/com_balance.csv --include-stand --error
 """
 
 from __future__ import annotations
@@ -18,7 +28,7 @@ import math
 import os
 import sys
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence
 
 
 def _prefer_x11_for_mujoco_viewer() -> None:
@@ -58,7 +68,6 @@ except ImportError:
 from marsdog_control.apps.sim.sim_walk import make_controllers  # noqa: E402
 from marsdog_control.config.gains import JOINT_GAINS, SIM_JOINT_GAINS  # noqa: E402
 from marsdog_control.config.joints import JOINT_MAP  # noqa: E402
-from marsdog_control.control.executor import gravity_trq  # noqa: E402
 from marsdog_control.core.types import ControlOutput, MotionTarget, RobotMode  # noqa: E402
 from marsdog_control.input.user_input import KeyReader  # noqa: E402
 from marsdog_control.motion.balance_stand import (  # noqa: E402
@@ -77,10 +86,13 @@ _TOOL_FLAGS = (
     "--real",
     "--allow-lift",
     "--no-log-joints",
+    "--no-log",
+    "--log",
     "--duration",
     "--com-step",
     "--lift-z",
     "--log-hz",
+    "--csv-hz",
     "--max-tilt-deg",
     "--fade-s",
 )
@@ -90,11 +102,11 @@ _LOG_JOINT_IDS = tuple(j.motor_id for j in JOINT_MAP if j.bus != "none")
 
 _HELP = """
 Keys (this tool only — not walk hotkeys):
-  W/S  com_x ± step (forward / back)
-  A/D  com_y ± step (left / right)
+  W/S  x_shift ± step (feet forward / back)  [= run_walk --x-shift]
+  A/D  y_shift ± step (feet left / right)    [= run_walk --y-shift]
   Q    lift FL+RR diagonal  (real: needs --allow-lift)
   E    plant FL+RR (quad support)
-  R    reset com_x/y to 0
+  R    reset x/y_shift to 0
   X or Ctrl+C  quit
 """
 
@@ -111,13 +123,14 @@ def _build_args():
             continue
         if a in _TOOL_FLAGS or a.startswith(
             ("--duration=", "--com-step=", "--lift-z=", "--log-hz=",
-             "--max-tilt-deg=", "--fade-s=")
+             "--csv-hz=", "--max-tilt-deg=", "--fade-s=")
         ):
             if a in (
                 "--duration",
                 "--com-step",
                 "--lift-z",
                 "--log-hz",
+                "--csv-hz",
                 "--max-tilt-deg",
                 "--fade-s",
             ):
@@ -137,6 +150,7 @@ def _build_args():
         "--natural-soft-trot",
         "--no-wbc",
         "--no-vmc",
+        # gravity_comp / leg_kp_scale follow SoftTrot + schema (= run_walk)
     ] + filtered
     args = parse_args()
     sys.argv = old
@@ -173,6 +187,24 @@ def _parse_tool_flags(argv: list[str]):
         help="Do not print joint angles (tgt/fb deg) with status lines",
     )
     p.add_argument(
+        "--log",
+        action="store_true",
+        default=True,
+        help="Write jitter CSV to mocap_to_real/log/com_balance.csv (default ON)",
+    )
+    p.add_argument(
+        "--no-log",
+        action="store_false",
+        dest="log",
+        help="Disable CSV logging",
+    )
+    p.add_argument(
+        "--csv-hz",
+        type=float,
+        default=0.0,
+        help="CSV sample rate (Hz). 0 = every control tick (~200 Hz)",
+    )
+    p.add_argument(
         "--max-tilt-deg",
         type=float,
         default=20.0,
@@ -206,13 +238,13 @@ def _handle_key(
     if key in ("x", "X", "\x03"):
         return False
     if key in ("w", "W"):
-        planner.nudge_com(dx=+step)
+        planner.nudge_shift(dx=+step)
     elif key in ("s", "S"):
-        planner.nudge_com(dx=-step)
+        planner.nudge_shift(dx=-step)
     elif key in ("a", "A"):
-        planner.nudge_com(dy=+step)
+        planner.nudge_shift(dy=+step)
     elif key in ("d", "D"):
-        planner.nudge_com(dy=-step)
+        planner.nudge_shift(dy=-step)
     elif key in ("q", "Q"):
         if not allow_lift:
             if not lift_blocked_msg:
@@ -223,13 +255,15 @@ def _handle_key(
     elif key in ("e", "E"):
         planner.plant_diag()
     elif key in ("r", "R"):
-        planner.reset_com()
+        planner.reset_shift()
     return True
 
 
 def _control_output(
     targets: Dict[int, float],
     trq_ff: Optional[Dict[int, float]],
+    *,
+    leg_kp_scale: float = 1.0,
 ) -> ControlOutput:
     return ControlOutput(
         target=MotionTarget(q=dict(targets), source_mode=RobotMode.STAND),
@@ -237,7 +271,40 @@ def _control_output(
         control_period_s=CONTROL_DT,
         gait_active=False,
         dm_active=False,
+        leg_kp_scale=float(leg_kp_scale),
     )
+
+
+def _stand_trq_ff(
+    targets: Dict[int, float],
+    *,
+    gravity_on: bool,
+    grav_scale: float,
+    gains: dict,
+) -> Dict[int, float]:
+    """Match run_walk stand: gravity_trq when ON, else static JOINT_GAINS trq_ff."""
+    from marsdog_control.config.gains import static_trq_ff_by_id
+    from marsdog_control.control.executor import gravity_trq
+
+    out = dict(static_trq_ff_by_id(gains))
+    if gravity_on:
+        out.update(gravity_trq(targets, float(grav_scale)))
+    return out
+
+
+def _send_stand(backend, targets: Dict[int, float], ctx: dict) -> Dict[int, float]:
+    """Send stand MIT with run_walk kp/kd (leg_kp_scale) + trq_ff."""
+    rt = ctx["runtime_state"]
+    gains = ctx.get("gains") or JOINT_GAINS
+    trq = _stand_trq_ff(
+        targets,
+        gravity_on=bool(ctx["gravity_on"]),
+        grav_scale=float(ctx["grav_scale"]),
+        gains=gains,
+    )
+    backend.send(_control_output(
+        targets, trq, leg_kp_scale=float(rt.leg_kp_scale)))
+    return trq
 
 
 def _format_joint_deg_line(
@@ -284,6 +351,33 @@ def _print_joint_angles(
         print(_format_joint_deg_line("fb ", measured))
 
 
+def _csv_every(csv_hz: float) -> int:
+    """Rows every N control ticks. 0 / >=CONTROL_HZ → every tick."""
+    hz = float(csv_hz or 0.0)
+    if hz <= 0.0 or hz >= CONTROL_HZ - 1e-9:
+        return 1
+    return max(1, int(round(CONTROL_HZ / hz)))
+
+
+def _read_motor_torques(lz, evo, dm, incos, joints: Sequence) -> Dict[int, float]:
+    """Best-effort torque snapshot (Nm). Missing drivers → skip that joint."""
+    out: Dict[int, float] = {}
+    for j in joints:
+        mid = int(j.motor_id)
+        try:
+            if j.mtype == "lz" and lz is not None:
+                out[mid] = float(lz.get_torque(mid))
+            elif j.mtype == "evo" and evo is not None:
+                out[mid] = float(evo.get_torque(mid))
+            elif j.mtype == "incos" and incos is not None:
+                out[mid] = float(incos.get_torque(mid))
+            elif j.mtype == "dm" and dm is not None:
+                out[mid] = float(dm.get_torque(mid))
+        except Exception:
+            continue
+    return out
+
+
 def _bootstrap_stand(tool):
     """Shared SoftTrot stand + planner (sim or real gains).
 
@@ -303,19 +397,42 @@ def _bootstrap_stand(tool):
 
     stack = make_controllers(args, startup)
     stand = stack.stand
-    grav_scale = float(getattr(runtime_state, "gravity_scale", 1.0) or 1.0)
-    gravity_on = bool(getattr(runtime_state, "gravity_comp", True))
-    planner = BalanceStandPlanner(stand, lift_z_m=tool.lift_z, com_x_m=0.040)
+    # Keep SoftTrot / schema gravity + leg_kp_scale (= run_walk). Do not force OFF.
+    gravity_on = bool(runtime_state.gravity_comp)
+    grav_scale = float(runtime_state.gravity_scale)
+    # Stand is built with CLI x/y already baked into offsets. Strip them into
+    # the planner so displayed values == run_walk --x-shift/--y-shift.
+    cli_x = float(getattr(args, "x_shift", 0.0) or 0.0)
+    cli_y = float(getattr(args, "y_shift", 0.0) or 0.0)
+    if abs(cli_x) > 1e-12 or abs(cli_y) > 1e-12:
+        stand.x_offset_front = float(stand.x_offset_front) - cli_x
+        stand.x_offset_rear = float(stand.x_offset_rear) - cli_x
+        stand.y_offset = float(getattr(stand, "y_offset", 0.0) or 0.0) - cli_y
+        stand._update_cache()
+    planner = BalanceStandPlanner(
+        stand, lift_z_m=tool.lift_z, x_shift=cli_x, y_shift=cli_y,
+    )
     pin_com = pinocchio_com_in_base(stand)
 
     print(
         f"[CoMBal] mode={'REAL' if tool.real else 'SIM'}  "
-        f"SoftTrot stand + MIT + gravity_comp={gravity_on} scale={grav_scale:.2f}"
+        f"SoftTrot stand + MIT  (= run_walk gains)"
     )
     print(
         f"[CoMBal] stand H={stand.body_height:.3f}  "
         f"x_off F/R={stand.x_offset_front:.4f}/{stand.x_offset_rear:.4f}  "
-        f"abd={stand.hip_abduction:.3f}  com_step={tool.com_step:.4f}m"
+        f"y_off={getattr(stand, 'y_offset', 0.0):.4f}  "
+        f"abd={stand.hip_abduction:.3f}  step={tool.com_step:.4f}m"
+    )
+    print(
+        f"[CoMBal] gains  leg_kp_scale={runtime_state.leg_kp_scale:.2f}  "
+        f"gravity_comp={'ON' if gravity_on else 'OFF'}  "
+        f"grav_scale={grav_scale:.2f}  "
+        f"(pass --no-gravity-comp to use static JOINT_GAINS trq_ff only)"
+    )
+    print(
+        f"[CoMBal] shift convention = walk --x-shift/--y-shift "
+        f"(start x={cli_x:+.4f} y={cli_y:+.4f})"
     )
     if pin_com is not None:
         print(
@@ -331,6 +448,7 @@ def _bootstrap_stand(tool):
         "startup": startup,
         "stand": stand,
         "planner": planner,
+        "gains": gains,
         "grav_scale": grav_scale,
         "gravity_on": gravity_on,
     }
@@ -338,6 +456,8 @@ def _bootstrap_stand(tool):
 
 def _run_sim(tool, ctx) -> int:
     from marsdog_control.backends.sim import SimPhysicsOptions, SimRobotBackend
+    from marsdog_control.compat import legacy_dir
+    from marsdog_control.io.logging import setup_com_balance_log, write_com_balance_row
 
     stand = ctx["stand"]
     planner = ctx["planner"]
@@ -358,6 +478,7 @@ def _run_sim(tool, ctx) -> int:
     keyboard = KeyReader()
     keyboard.start()
     log_every = max(1, int(CONTROL_HZ / max(0.1, tool.log_hz)))
+    csv_every = _csv_every(float(getattr(tool, "csv_hz", 0.0) or 0.0))
     max_ticks = int(tool.duration * CONTROL_HZ) if tool.duration > 0 else 0
     tick = 0
     wall0 = time.time()
@@ -368,6 +489,27 @@ def _run_sim(tool, ctx) -> int:
     )
 
     log_joints = not bool(tool.no_log_joints)
+    csv_joints = [j for j in JOINT_MAP if j.bus != "none"]
+    gains = ctx.get("gains") or (SIM_JOINT_GAINS if SIM_JOINT_GAINS else JOINT_GAINS)
+    ctx = {**ctx, "gains": gains}
+    csv_f, csv_w, csv_path = setup_com_balance_log(
+        bool(getattr(tool, "log", True)),
+        base_dir=str(legacy_dir()),
+        meta={
+            "backend": "sim",
+            "control_hz": CONTROL_HZ,
+            "csv_every_ticks": csv_every,
+            "gravity_on": gravity_on,
+            "grav_scale": grav_scale,
+            "height_m": float(stand.body_height),
+        },
+    )
+    if csv_w is not None:
+        print(
+            f"[log] CSV @ {CONTROL_HZ / csv_every:.0f} Hz "
+            f"(every {csv_every} tick(s)); compare with walk via "
+            f"plot_tracking_mpl {csv_path} --include-stand --error"
+        )
 
     def _log(targets: Optional[Dict[int, float]] = None) -> None:
         contacts = sorted(backend.foot_contacts())
@@ -391,6 +533,7 @@ def _run_sim(tool, ctx) -> int:
 
     def _tick_once() -> bool:
         nonlocal tick, running
+        t_loop = time.time()
         while True:
             key = keyboard.get()
             if key is None:
@@ -409,10 +552,41 @@ def _run_sim(tool, ctx) -> int:
                 allow_lift=allow_lift, lift_blocked_msg=lift_blocked_msg,
             )
         targets = planner.get_targets()
-        trq = gravity_trq(targets, grav_scale) if gravity_on else {}
-        backend.send(_control_output(targets, trq))
+        trq = _send_stand(backend, targets, ctx)
         backend.step()
         tick += 1
+        if csv_w is not None and (tick % csv_every) == 0:
+            try:
+                st = backend.read_state(set(_LOG_JOINT_IDS))
+                write_com_balance_row(
+                    csv_w,
+                    joints=csv_joints,
+                    targets=targets,
+                    measured=st.joint_pos,
+                    measured_vel=st.joint_vel,
+                    trq_ff=trq,
+                    joint_gains=gains,
+                    t_s=float(backend.sim_time),
+                    run_t_s=float(backend.sim_time) - sim0,
+                    dt_ms=(time.time() - t_loop) * 1000.0,
+                    tick=tick,
+                    x_shift_m=planner.x_shift,
+                    y_shift_m=planner.y_shift,
+                    support="FL+RR_up" if planner.diag_lifted else "quad",
+                    lift_z_m=planner.lift_z_m,
+                    diag_lifted=planner.diag_lifted,
+                    gravity_on=gravity_on,
+                    grav_scale=grav_scale,
+                    imu_roll=st.roll,
+                    imu_pitch=st.pitch,
+                    imu_yaw=st.yaw,
+                    imu_gyro_roll=st.gyro_roll,
+                    imu_gyro_pitch=st.gyro_pitch,
+                    imu_gyro_yaw=st.gyro_yaw,
+                    controller="sim_com_balance/sim",
+                )
+            except Exception:
+                pass
         if tick % log_every == 0:
             _log(targets)
         if max_ticks and tick >= max_ticks:
@@ -446,9 +620,17 @@ def _run_sim(tool, ctx) -> int:
     finally:
         keyboard.stop()
         _log(planner.get_targets())
+        if csv_f is not None:
+            try:
+                csv_f.flush()
+                csv_f.close()
+            except Exception:
+                pass
+            if csv_path:
+                print(f"[log] CSV closed: {os.path.abspath(csv_path)}")
         print(
             f"[CoMBal] done  ticks={tick}  final {planner.describe()}  "
-            f"(record this com_x/y if still balanced)"
+            f"(copy into walk: {planner.walk_cli_hint()})"
         )
     return 0
 
@@ -575,6 +757,7 @@ def _run_real(tool, ctx) -> int:
     keyboard = KeyReader()
     keyboard.start()
     log_every = max(1, int(CONTROL_HZ / max(0.1, tool.log_hz)))
+    csv_every = _csv_every(float(getattr(tool, "csv_hz", 0.0) or 0.0))
     max_ticks = int(tool.duration * CONTROL_HZ) if tool.duration > 0 else 0
     tick = 0
     wall0 = time.time()
@@ -582,6 +765,30 @@ def _run_real(tool, ctx) -> int:
     abort_reason = ""
 
     log_joints = not bool(tool.no_log_joints)
+    from marsdog_control.io.logging import setup_com_balance_log, write_com_balance_row
+
+    csv_f, csv_w, csv_path = setup_com_balance_log(
+        bool(getattr(tool, "log", True)),
+        base_dir=str(legacy_dir()),
+        meta={
+            "backend": "real",
+            "control_hz": CONTROL_HZ,
+            "csv_every_ticks": csv_every,
+            "gravity_on": gravity_on,
+            "grav_scale": grav_scale,
+            "height_m": float(stand.body_height),
+            "allow_lift": allow_lift,
+            "max_tilt_deg": float(tool.max_tilt_deg),
+            "note": "run_walk SoftTrot gains: JOINT_GAINS × leg_kp_scale + gravity/static trq_ff",
+        },
+    )
+    if csv_w is not None:
+        print(
+            f"[log] CSV @ {CONTROL_HZ / csv_every:.0f} Hz "
+            f"(every {csv_every} tick(s)); compare with walk via\n"
+            f"      python -m marsdog_control.apps.tools.analysis.plot_tracking_mpl "
+            f"{csv_path} --include-stand --error"
+        )
 
     def _log(
         roll: float,
@@ -631,21 +838,44 @@ def _run_real(tool, ctx) -> int:
                 )
                 planner.plant_diag()
                 planner.reset_com()
-                backend.send(
-                    _control_output(
-                        planner.get_targets(),
-                        gravity_trq(planner.get_targets(), grav_scale)
-                        if gravity_on else {},
-                    )
-                )
+                _send_stand(backend, planner.get_targets(), ctx)
                 abort_reason = "tilt"
                 running = False
                 break
 
             targets = planner.get_targets()
-            trq = gravity_trq(targets, grav_scale) if gravity_on else {}
-            backend.send(_control_output(targets, trq))
+            trq = _send_stand(backend, targets, ctx)
             tick += 1
+            if csv_w is not None and (tick % csv_every) == 0:
+                write_com_balance_row(
+                    csv_w,
+                    joints=real_joints,
+                    targets=targets,
+                    measured=state.joint_pos,
+                    measured_vel=state.joint_vel,
+                    torque_by_id=_read_motor_torques(
+                        lz, evo, dm, incos, real_joints),
+                    trq_ff=trq,
+                    joint_gains=JOINT_GAINS,
+                    t_s=time.time(),
+                    run_t_s=time.time() - wall0,
+                    dt_ms=(time.time() - t_loop) * 1000.0,
+                    tick=tick,
+                    x_shift_m=planner.x_shift,
+                    y_shift_m=planner.y_shift,
+                    support="FL+RR_up" if planner.diag_lifted else "quad",
+                    lift_z_m=planner.lift_z_m,
+                    diag_lifted=planner.diag_lifted,
+                    gravity_on=gravity_on,
+                    grav_scale=grav_scale,
+                    imu_roll=state.roll,
+                    imu_pitch=state.pitch,
+                    imu_yaw=state.yaw,
+                    imu_gyro_roll=state.gyro_roll,
+                    imu_gyro_pitch=state.gyro_pitch,
+                    imu_gyro_yaw=state.gyro_yaw,
+                    controller="sim_com_balance/real",
+                )
             if tick % log_every == 0:
                 _log(state.roll, state.pitch, targets, state.joint_pos)
             if max_ticks and tick >= max_ticks:
@@ -665,8 +895,7 @@ def _run_real(tool, ctx) -> int:
         try:
             planner.plant_diag()
             targets = planner.get_targets()
-            trq = gravity_trq(targets, grav_scale) if gravity_on else {}
-            backend.send(_control_output(targets, trq))
+            _send_stand(backend, targets, ctx)
             time.sleep(0.05)
             if log_joints:
                 try:
@@ -676,10 +905,18 @@ def _run_real(tool, ctx) -> int:
                     _print_joint_angles(targets)
         except Exception:
             pass
+        if csv_f is not None:
+            try:
+                csv_f.flush()
+                csv_f.close()
+            except Exception:
+                pass
+            if csv_path:
+                print(f"[log] CSV closed: {os.path.abspath(csv_path)}")
         print(
             f"[CoMBal] done  ticks={tick}  final {planner.describe()}  "
             f"reason={abort_reason or 'ok'}  "
-            f"(record this com_x/y if still balanced)"
+            f"(copy into walk: {planner.walk_cli_hint()})"
         )
         # svc.shutdown_motors(lz, evo, dm, incos)
         print("[CoMBal] motors shut down")

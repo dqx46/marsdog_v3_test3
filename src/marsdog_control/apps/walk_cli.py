@@ -43,6 +43,7 @@ _OPEN_LOOP_GAIT_OPTS = frozenset({
     "--front-thrust-gain",
     "--front-thrust-swing-gain",
     "--x-shift",
+    "--y-shift",
     "--com-shift",
     "--com-shift-blend",
     "--lateral-sway",
@@ -69,9 +70,8 @@ _OPEN_LOOP_GAIT_OPTS = frozenset({
 })
 
 _UNKNOWN_OPT_HINTS = {
-    "--y-shift": "Y 向质心用 --com-shift（左右移重）；X 向用 --x-shift（前后）",
-    "--com-y": "Y 向质心用 --com-shift",
-    "--com-x": "X 向质心用 --x-shift",
+    "--com-y": "Y 向落脚点用 --y-shift（左右）；步态横向移重仍用 --com-shift",
+    "--com-x": "X 向落脚点用 --x-shift",
 }
 
 
@@ -81,7 +81,7 @@ class _WalkArgParser(argparse.ArgumentParser):
     def format_usage(self) -> str:
         return (
             f"usage: {self.prog} [开环步态参数...] [选项]\n"
-            f"       常用: --x-shift / --com-shift / --gait-period / --stance / "
+            f"       常用: --x-shift / --y-shift / --com-shift / --gait-period / --stance / "
             f"--height / --no-tail / --show\n"
             f"       开环清单: --help    全部参数: --help-all\n"
         )
@@ -121,6 +121,7 @@ def print_open_loop_params(args) -> None:
     amp_f = float(getattr(args, "amp_front", 0.0) or 0.0)
     amp_r = float(getattr(args, "amp_rear", 0.0) or 0.0)
     x_shift = float(getattr(args, "x_shift", 0.0) or 0.0)
+    y_shift = float(getattr(args, "y_shift", 0.0) or 0.0)
     com_m = float(getattr(args, "com_shift_m", 0.0) or 0.0)
     hz = (1.0 / period) if period > 1e-9 else 0.0
 
@@ -136,8 +137,9 @@ def print_open_loop_params(args) -> None:
         f"  （半步长；全步≈2×）"
     )
     print(
-        f"  质心     x_shift={x_shift*1000:+.1f} mm（前后）  "
-        f"com_shift={com_m*1000:+.1f} mm（左右）"
+        f"  落脚点   x_shift={x_shift*1000:+.1f} mm（前后）  "
+        f"y_shift={y_shift*1000:+.1f} mm（左右）  "
+        f"com_shift={com_m*1000:+.1f} mm（步态横向移重）"
     )
     print(
         f"  体高/柔顺 height={float(getattr(args, 'height', 0) or 0)*1000:.1f} mm  "
@@ -155,7 +157,7 @@ def parse_args():
         ),
         usage=(
             "%(prog)s [开环步态参数...] [选项]\n"
-            "       常用: --x-shift / --com-shift / --gait-period / --stance / "
+            "       常用: --x-shift / --y-shift / --com-shift / --gait-period / --stance / "
             "--height / --no-tail / --show\n"
             "       开环清单: --help    全部参数: --help-all"
         ),
@@ -434,7 +436,11 @@ def parse_args():
                         "勿再用本参数做全局软化；跳步阶段仍可能临时改写")
     p.add_argument("--x-shift",     type=float, default=GAIT.x_shift,
                    help="四脚落脚点整体X偏移(m); 正值=脚向前, 等效重心后移 "
-                        f"(默认 {GAIT.x_shift})")
+                        f"(默认 {GAIT.x_shift}); 与 sim_com_balance 同符号")
+    p.add_argument("--y-shift",     type=float, default=GAIT.y_shift,
+                   help="四脚落脚点整体Y偏移(m); 正值=脚向左(+Y), 等效重心右移 "
+                        f"(默认 {GAIT.y_shift}); 与 sim_com_balance 同符号; "
+                        "不同于 --com-shift(步态换腿横向移重)")
     # ── A: 线性油门 → 步幅缩放 ──
     p.add_argument("--throttle-min-scale", type=float, default=GAIT.throttle_min_scale,
                    help="[A] 线性油门: 轻推时的最小步幅比例 (默认0.5; 设1.0=恒定满步幅=旧行为)")

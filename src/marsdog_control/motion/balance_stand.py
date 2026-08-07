@@ -1,8 +1,13 @@
-"""BalanceStandPlanner — fixed world feet, shift body/CoM via IK.
+"""BalanceStandPlanner — fixed world feet, shift via walk-convention foot offsets.
 
-Used by ``sim_com_balance`` to manually search horizontal CoM offsets while
-keeping contact points approximately planted. Same Y sign convention as SoftTrot:
-body +Y (left) → feet −Y in body frame (``y_sway = -lat_offset``).
+Used by ``sim_com_balance`` to manually search horizontal foot shifts while
+keeping contact points approximately planted.
+
+**Same sign as** ``run_walk --x-shift`` / ``--y-shift``:
+  positive x_shift = feet forward (body CoM aft relative to feet)
+  positive y_shift = feet left / +Y (body CoM right relative to feet)
+
+Copy the printed values straight into ``./run_walk.sh --x-shift … --y-shift …``.
 """
 
 from __future__ import annotations
@@ -40,21 +45,32 @@ def _y_body_to_abd_roll(leg: str, y_body: float, body_height: float) -> float:
 
 
 class BalanceStandPlanner:
-    """Nominal stand feet + horizontal CoM offset IK + optional FL–RR lift."""
+    """Nominal stand feet + walk-convention x/y foot shift IK + optional FL–RR lift."""
 
     def __init__(
         self,
         stand: StandController,
         *,
         lift_z_m: float = 0.025,
-        com_x_m: float = 0.0,
-        com_y_m: float = 0.0,
+        x_shift: float = 0.0,
+        y_shift: float = 0.0,
+        # Back-compat aliases (body-CoM convention, opposite of walk foot shift).
+        com_x_m: Optional[float] = None,
+        com_y_m: Optional[float] = None,
     ) -> None:
         self.stand = stand
-        self.com_x_m = float(com_x_m)
-        self.com_y_m = float(com_y_m)
+        if com_x_m is not None:
+            x_shift = -float(com_x_m)
+        if com_y_m is not None:
+            y_shift = -float(com_y_m)
+        self.x_shift = float(x_shift)
+        self.y_shift = float(y_shift)
         self.diag_lifted = False
         self.lift_z_m = float(lift_z_m)
+        # Stand should be built with x/y_shift=0; planner owns absolute walk flags.
+        self._base_x_front = float(stand.x_offset_front)
+        self._base_x_rear = float(stand.x_offset_rear)
+        self._base_y = float(getattr(stand, "y_offset", 0.0) or 0.0)
         self._foot_pitch = front_standing_foot_pitch(
             stand.body_height,
             stand.x_offset_front,
@@ -62,13 +78,37 @@ class BalanceStandPlanner:
             foot_pitch=math.radians(stand.front_stand_foot_pitch_deg),
         )
 
+    # --- aliases matching old body-CoM naming (sign flipped) ---
+    @property
+    def com_x_m(self) -> float:
+        return -self.x_shift
+
+    @com_x_m.setter
+    def com_x_m(self, v: float) -> None:
+        self.x_shift = -float(v)
+
+    @property
+    def com_y_m(self) -> float:
+        return -self.y_shift
+
+    @com_y_m.setter
+    def com_y_m(self, v: float) -> None:
+        self.y_shift = -float(v)
+
     def reset_com(self) -> None:
-        self.com_x_m = 0.0
-        self.com_y_m = 0.0
+        self.x_shift = 0.0
+        self.y_shift = 0.0
+
+    def reset_shift(self) -> None:
+        self.reset_com()
 
     def nudge_com(self, dx: float = 0.0, dy: float = 0.0) -> None:
-        self.com_x_m += float(dx)
-        self.com_y_m += float(dy)
+        """Nudge in walk foot-shift space (same as nudge_shift)."""
+        self.nudge_shift(dx=dx, dy=dy)
+
+    def nudge_shift(self, dx: float = 0.0, dy: float = 0.0) -> None:
+        self.x_shift += float(dx)
+        self.y_shift += float(dy)
 
     def lift_diag(self) -> None:
         self.diag_lifted = True
@@ -81,32 +121,33 @@ class BalanceStandPlanner:
         h = float(stand.body_height)
         z_front0 = -(h - _FRONT_HIP_OFFSET)
         z_rear0 = -(h - _REAR_HIP_OFFSET)
-        x0_f = float(stand.x_offset_front)
-        x0_r = float(stand.x_offset_rear)
         abd0 = float(stand.hip_abduction)
-        cx, cy = float(self.com_x_m), float(self.com_y_m)
+        sx, sy = float(self.x_shift), float(self.y_shift)
 
-        # Body +X/+Y ↔ feet −X/−Y in body frame (world feet ~ fixed).
+        # Walk convention: feet = base + shift (same as --x-shift / --y-shift).
+        x_f = self._base_x_front + sx
+        x_r = self._base_x_rear + sx
+        y = self._base_y + sy
         feet = {
-            "fl": (x0_f - cx, 0.0 - cy, z_front0),
-            "fr": (x0_f - cx, 0.0 - cy, z_front0),
-            "rl": (x0_r - cx, 0.0 - cy, z_rear0),
-            "rr": (x0_r - cx, 0.0 - cy, z_rear0),
+            "fl": (x_f, y, z_front0),
+            "fr": (x_f, y, z_front0),
+            "rl": (x_r, y, z_rear0),
+            "rr": (x_r, y, z_rear0),
         }
         if self.diag_lifted:
             for leg in _LIFT_LEGS:
-                x, y, z = feet[leg]
-                feet[leg] = (x, y, z + self.lift_z_m)
+                x, yy, z = feet[leg]
+                feet[leg] = (x, yy, z + self.lift_z_m)
 
         targets: Dict[int, float] = {}
 
         for leg in ("fl", "fr"):
-            x, y, z = feet[leg]
+            x, yy, z = feet[leg]
             hip_u, calf_u, tarsus_u = ik_front_3link_foot_orient(
                 x, z, self._foot_pitch)
             calf_u = _clamp(calf_u, -1.82, 1.93)
             abd = front_thigh_roll_abd_urdf(leg, abd0) + _y_body_to_abd_roll(
-                leg, y, h)
+                leg, yy, h)
             for jname, ang in (
                 (f"{leg}_hip_pitch", hip_u),
                 (f"{leg}_calf", calf_u),
@@ -117,10 +158,10 @@ class BalanceStandPlanner:
                 targets[j.motor_id] = ang
 
         for leg in ("rl", "rr"):
-            x, y, z = feet[leg]
+            x, yy, z = feet[leg]
             thigh_u, calf_u = ik_rear_leg_2d(x, z)
             calf_u = _clamp(calf_u, -0.5, 1.56)
-            abd = abd0 + _y_body_to_abd_roll(leg, y, h)
+            abd = abd0 + _y_body_to_abd_roll(leg, yy, h)
             for jname, ang in (
                 (f"{leg}_thigh", thigh_u),
                 (f"{leg}_calf", calf_u),
@@ -151,8 +192,14 @@ class BalanceStandPlanner:
     def describe(self) -> str:
         lift = "FL+RR_up" if self.diag_lifted else "quad"
         return (
-            f"com_x={self.com_x_m:+.4f} com_y={self.com_y_m:+.4f} "
+            f"x_shift={self.x_shift:+.4f} y_shift={self.y_shift:+.4f} "
             f"support={lift} lift_z={self.lift_z_m:.3f}"
+        )
+
+    def walk_cli_hint(self) -> str:
+        return (
+            f"./run_walk.sh --x-shift {self.x_shift:.4f} "
+            f"--y-shift {self.y_shift:.4f}"
         )
 
 

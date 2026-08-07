@@ -410,6 +410,9 @@ def main(args=None):
     # （实际偏移在 gait_recipes.StandingPoseConfig.from_args 内叠加）
     if abs(startup.x_shift) > 1e-6:
         print(f"[COM] 落脚点整体X偏移 = {startup.x_shift*1000:+.0f}mm (正=脚前移/重心后移)")
+    y_shift = float(getattr(startup, "y_shift", 0.0) or 0.0)
+    if abs(y_shift) > 1e-6:
+        print(f"[COM] 落脚点整体Y偏移 = {y_shift*1000:+.0f}mm (正=脚左移/重心右移)")
 
     # ── 步态 / FSM / Safety / IMU（runtime/walk_controllers 工厂）──────────
     stack = assemble_walk_control_stack(

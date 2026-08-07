@@ -168,11 +168,14 @@ class StandController(GaitController):
                  hip_abduction: float = 0.05,
                  use_tarsus: bool = True,
                  front_stand_tarsus_deg: float = 0.0,
-                 front_stand_foot_pitch_deg: float = None):
+                 front_stand_foot_pitch_deg: float = None,
+                 y_offset: float = 0.0):
         self.body_height = body_height
         self.x_offset_front = x_offset_front if x_offset_front is not None else _FRONT_X0
         self.x_offset_rear = x_offset_rear if x_offset_rear is not None else _REAR_X0
         self.hip_abduction = hip_abduction
+        # Body-frame foot Y (+left); same sign as walk --y-shift.
+        self.y_offset = float(y_offset)
         # use_tarsus 恒 True: 唯一站姿就是三连杆带主动 tarsus, 不再退回老姿态。
         self.use_tarsus = True
         # 必须和 NaturalTrot/StableTrot 的 front_standing_foot_pitch() 用同一套输入,
@@ -191,6 +194,21 @@ class StandController(GaitController):
         self._cached = compute_standing_pose_3link(
             self.body_height, self.x_offset_front, self.x_offset_rear,
             self.hip_abduction, foot_pitch=foot_pitch)
+        # Apply constant lateral foot offset (abd delta), matching SoftTrot y_body.
+        y = float(self.y_offset)
+        if abs(y) > 1e-9:
+            h = max(1e-3, float(self.body_height))
+            for leg, jname in (
+                ("fl", "fl_thigh_roll"),
+                ("fr", "fr_thigh_roll"),
+                ("rl", "rl_hip"),
+                ("rr", "rr_hip"),
+            ):
+                j = JOINT_BY_NAME[jname]
+                side = 1.0 if leg.endswith("l") else -1.0
+                self._cached[j.motor_id] = (
+                    float(self._cached.get(j.motor_id, 0.0)) + side * y / h
+                )
 
     def set_height(self, h: float):
         self.body_height = h
@@ -260,7 +278,8 @@ class StableTrot(GaitController):
                  trot_roll_ff_neg_deg: float = 0.0,
                  trot_roll_ff_pos_deg: float = 0.0,
                  anti_roll_asym_neg: float = 1.0,
-                 anti_roll_asym_pos: float = 1.0):
+                 anti_roll_asym_pos: float = 1.0,
+                 y_offset: float = 0.0):
         self.body_height      = body_height
         self.amp_front        = amp_front
         self.amp_rear         = amp_rear
@@ -272,6 +291,8 @@ class StableTrot(GaitController):
         self.x_offset_front   = x_offset_front if x_offset_front is not None else _FRONT_X0
         self.x_offset_rear    = x_offset_rear if x_offset_rear is not None else _REAR_X0
         self.hip_abduction    = hip_abduction
+        # Constant body-frame foot Y (+left); same as walk --y-shift / stand.
+        self.y_offset         = float(y_offset)
         self.lateral_sway     = lateral_sway
         self.anti_roll        = anti_roll
         self.reactive_kp      = reactive_kp
@@ -700,7 +721,10 @@ class StableTrot(GaitController):
                 y_turn = self._leg_y_turn(leg, t, self._turn_filtered) * ramp
 
             # Total Y offset
-            y_total = y_sway + y_reactive + y_turn
+            y_total = (
+                y_sway + y_reactive + y_turn
+                + float(getattr(self, "y_offset", 0.0))
+            )
 
             # Convert to abduction joint angle
             abd_delta = self._y_body_to_abd_roll(leg, y_total)
@@ -749,7 +773,10 @@ class StableTrot(GaitController):
                 y_turn = self._leg_y_turn(leg, t, self._turn_filtered) * ramp
 
             # Total Y offset
-            y_total = y_sway + y_reactive + y_turn
+            y_total = (
+                y_sway + y_reactive + y_turn
+                + float(getattr(self, "y_offset", 0.0))
+            )
 
             # Convert to abduction joint angle
             abd_delta = self._y_body_to_abd_roll(leg, y_total)
@@ -1272,6 +1299,7 @@ class JumpController(StandController):
         hip_abduction: float = 0.05,
         front_stand_tarsus_deg: float = 0.0,
         front_stand_foot_pitch_deg: float = None,
+        y_offset: float = 0.0,
         crouch_depth: float = 0.045,
         crouch_s: float = 0.28,
         push_s: float = 0.12,
@@ -1294,6 +1322,7 @@ class JumpController(StandController):
             hip_abduction=hip_abduction,
             front_stand_tarsus_deg=front_stand_tarsus_deg,
             front_stand_foot_pitch_deg=front_stand_foot_pitch_deg,
+            y_offset=y_offset,
         )
         self.family = "jump"
         self.spot_turn_active = False
