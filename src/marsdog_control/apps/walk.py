@@ -103,7 +103,8 @@ from marsdog_control.motion.pose_contract import (
 GP_DEADZONE       = 0.12
 GP_TROT_THRESHOLD = 0.15
 GP_PERIOD_STEP    = 0.05
-GP_LIE_DOWN_LT_THRESHOLD = 0.60
+GP_LT_THRESHOLD = 0.60
+GP_LIE_DOWN_LT_THRESHOLD = GP_LT_THRESHOLD  # 兼容旧名（现 LT=回零）
 GP_BARK_RT_THRESHOLD = 0.60
 
 CONTROL_HZ   = 200.0
@@ -153,6 +154,7 @@ from marsdog_control.motion.lie_down import (  # noqa: E402
     load_lie_down_pose as _load_lie_down_pose,
     build_lie_down_target as _build_lie_down_target,
     build_sit_target as _build_sit_target,
+    build_zero_target as _build_zero_target,
 )
 
 _LIE_DOWN_POSE_PATH = _default_lie_down_pose_path(
@@ -231,6 +233,10 @@ def build_lie_down_target(online, pose_path: str = _LIE_DOWN_POSE_PATH) -> dict:
 
 def build_sit_target(online, pose_path: str = _SIT_POSE_PATH) -> dict:
     return _build_sit_target(online, pose_path=pose_path)
+
+
+def build_zero_target(online) -> dict:
+    return _build_zero_target(online)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -471,6 +477,7 @@ def main(args=None):
         input_hal_cls=_WalkInputHAL,
         build_lie_down_target=build_lie_down_target,
         build_sit_target=build_sit_target,
+        build_zero_target=build_zero_target,
         stop_scope=_stop_scope,
         load_trim_cal=_load_trim, save_trim_cal=_save_trim,
         trim_cal_path=_TRIM_CAL_PATH,

@@ -97,6 +97,7 @@ class WalkSessionContext:
     trim_cal_path: str
     control_hz: float
     build_sit_target: Optional[Callable] = None
+    build_zero_target: Optional[Callable] = None
 
 
 def _direction_test_precheck(ctx: WalkSessionContext) -> bool:
@@ -224,6 +225,7 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
         backend=real_backend,
         build_lie_down_target=ctx.build_lie_down_target,
         build_sit_target=ctx.build_sit_target,
+        build_zero_target=ctx.build_zero_target,
         read_positions=svc.read_positions,
         smooth_transition=svc.smooth_transition,
         tail=tail,

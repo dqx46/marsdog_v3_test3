@@ -13,6 +13,7 @@ from marsdog_control.core.types import RobotMode
 _POSE_LABEL = {
     "lie_down": "趴下",
     "sit": "坐下",
+    "zero": "回零",
 }
 
 
@@ -46,7 +47,10 @@ class LieDownSession:
     smooth_transition: Callable
     dm_fixed_targets: dict
     build_sit_target: Optional[Callable] = None
+    build_zero_target: Optional[Callable] = None
     transition_s: float = 4.0
+    # 回零默认稍短（对齐 go_zero 工具 ~3s）；趴下/坐下仍用 transition_s
+    zero_transition_s: float = 3.0
     # hold 切入后重力补偿从 0 平滑接入，避免与 smooth_transition（无 τ_g）接缝抽搐
     grav_ramp_s: float = 1.5
     # hold 切入后刚度从 kp_start→1；过渡末端也落到同一 kp_start
@@ -60,13 +64,20 @@ class LieDownSession:
     settle_s_per_rad: float = 4.0  # 误差越大收敛越长；~16° → ~1.1s
     hold: bool = False
     targets: dict = field(default_factory=dict)
-    active_pose: Optional[str] = None  # "lie_down" | "sit" | None
+    active_pose: Optional[str] = None  # "lie_down" | "sit" | "zero" | None
     hold_t0: Optional[float] = None
 
     def _builder_for(self, pose: str) -> Optional[Callable]:
         if pose == "sit":
             return self.build_sit_target
+        if pose == "zero":
+            return self.build_zero_target
         return self.build_target
+
+    def _transition_s_for(self, pose: str) -> float:
+        if pose == "zero":
+            return float(self.zero_transition_s)
+        return float(self.transition_s)
 
     def _clear_hold(self) -> None:
         self.hold = False
@@ -217,10 +228,12 @@ class LieDownSession:
             pose = "lie_down"
         label_cn = _POSE_LABEL[pose]
 
+        dur = self._transition_s_for(pose)
+
         # 同一姿势再触发 → 起立
         if self.hold and self.active_pose == pose:
             print(f"\n[{pose}] 再次触发: 从{label_cn}姿势缓慢起立 "
-                  f"({self.transition_s:.1f}s)...")
+                  f"({dur:.1f}s)...")
             stand_targets = fsm.stand.get_targets(0)          # URDF 空间(供 fsm/主循环)
             stand_targets = {
                 mid: q for mid, q in stand_targets.items()
@@ -242,7 +255,7 @@ class LieDownSession:
                 safety.reset()
             if not self._pose_transition(
                     lz, evo, dm, incos, cur_stand, stand_targets_motor,
-                    self.transition_s, f"{pose}-stand"):
+                    dur, f"{pose}-stand"):
                 return LieDownSessionResult(handled=True, break_loop=True)
             if not self._close_tracking_gap(
                     lz=lz, evo=evo, dm=dm, incos=incos, board=board,
@@ -265,8 +278,12 @@ class LieDownSession:
 
         pose_targets = builder(set(online))
         if not pose_targets:
-            print(f"\n[{pose}] 没有可用{label_cn}目标"
-                  f"（检查 mocap_to_real/{'sit' if pose == 'sit' else 'lie_down'}_pose.json）, 忽略")
+            hint = {
+                "sit": "sit_pose.json",
+                "lie_down": "lie_down_pose.json",
+            }.get(pose, "")
+            extra = f"（检查 mocap_to_real/{hint}）" if hint else ""
+            print(f"\n[{pose}] 没有可用{label_cn}目标{extra}, 忽略")
             return LieDownSessionResult(handled=True)
 
         # 过渡与 hold 必须同一终点：捕获角先走 hold 下发路径（含限位）
@@ -277,7 +294,7 @@ class LieDownSession:
         if self.hold and self.active_pose and self.active_pose != pose:
             from_hint = f"（当前{_POSE_LABEL.get(self.active_pose, self.active_pose)}）"
         print(f"\n[{pose}] 触发: 从当前姿态{from_hint}缓慢过渡到{label_cn}姿势 "
-              f"({self.transition_s:.1f}s, 末端刚度{float(self.kp_start):.0%})...")
+              f"({dur:.1f}s, 末端刚度{float(self.kp_start):.0%})...")
         fsm.request_transition(
             RobotMode.STAND, targets_now=targets_now,
             blend_time=0.0, quiet=True)
@@ -292,7 +309,7 @@ class LieDownSession:
             safety.reset()
         if not self._pose_transition(
                 lz, evo, dm, incos, cur_pose, pose_targets,
-                self.transition_s, pose):
+                dur, pose):
             return LieDownSessionResult(handled=True, break_loop=True)
         if not self._close_tracking_gap(
                 lz=lz, evo=evo, dm=dm, incos=incos, board=board,
@@ -300,6 +317,11 @@ class LieDownSession:
                 target_motor=pose_targets,
                 label=pose):
             return LieDownSessionResult(handled=True, break_loop=True)
+        # 回零时同步达妙固定角，避免 hold 期间固定路径把脚尖拉回旧角
+        if pose == "zero":
+            for mid in (4, 8):
+                if mid in pose_targets:
+                    self.dm_fixed_targets[mid] = float(pose_targets[mid])
         self._enter_hold(
             pose, pose_targets_urdf,
             mono=float(mono if mono is not None else _time.monotonic()))

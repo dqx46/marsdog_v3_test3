@@ -11,7 +11,7 @@ from __future__ import annotations
 import select
 import sys
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Optional
 
 from marsdog_control.core.types import Direction, RobotMode, UserCommand
 
@@ -19,7 +19,8 @@ from marsdog_control.core.types import Direction, RobotMode, UserCommand
 # 从而无需反向 import walk。
 GP_DEADZONE = 0.12
 GP_PERIOD_STEP = 0.05
-GP_LIE_DOWN_LT_THRESHOLD = 0.60
+GP_LT_THRESHOLD = 0.60          # 左扳机 → 平滑回零
+GP_LIE_DOWN_LT_THRESHOLD = GP_LT_THRESHOLD  # 兼容旧名
 GP_BARK_RT_THRESHOLD = 0.60
 
 try:
@@ -113,6 +114,7 @@ class InputState:
     gp_rb_prev: bool = False
     gp_lt_prev: bool = False
     gp_rt_prev: bool = False
+    gp_x_prev: bool = False
     gp_ly_offset: float = 0.0
 
 
@@ -125,7 +127,8 @@ class DevTuningRuntime:
 
 def poll_user_command(gp, kb, fsm, inp: InputState, *,
                       gp_period_step: float = GP_PERIOD_STEP,
-                      gp_lie_down_lt_threshold: float = GP_LIE_DOWN_LT_THRESHOLD,
+                      gp_lie_down_lt_threshold: float = GP_LT_THRESHOLD,
+                      gp_lt_threshold: Optional[float] = None,
                       gp_bark_rt_threshold: float = GP_BARK_RT_THRESHOLD,
                       gp_deadzone: float = GP_DEADZONE) -> tuple:
     """Input: 手柄+键盘 -> (UserCommand, dev_key)。
@@ -133,6 +136,11 @@ def poll_user_command(gp, kb, fsm, inp: InputState, *,
     只表达"想干什么"(vx/turn/请求模式/estop/quit), 绝不直接改 mode。
     调参键(dev_key)交给 apply_dev_tuning 走开发旁路, 不进安全关键管线。
     """
+    # 兼容旧参数名 gp_lie_down_lt_threshold（现用于 LT→回零）
+    lt_thr = (
+        float(gp_lt_threshold) if gp_lt_threshold is not None
+        else float(gp_lie_down_lt_threshold)
+    )
     cmd = UserCommand()
 
     if gp is not None and gp.connected:
@@ -151,10 +159,14 @@ def poll_user_command(gp, kb, fsm, inp: InputState, *,
         if st.rb and not inp.gp_rb_prev:
             fsm.set_period(max(0.25, fsm.trot_fwd.period - gp_period_step))
         inp.gp_rb_prev = st.rb
-        lt_pressed = st.lt > gp_lie_down_lt_threshold
+        lt_pressed = st.lt > lt_thr
         if lt_pressed and not inp.gp_lt_prev:
-            cmd.request_lie_down = True
+            cmd.request_go_zero = True          # LT = 平滑回零
         inp.gp_lt_prev = lt_pressed
+        x_pressed = bool(getattr(st, "x", False))
+        if x_pressed and not inp.gp_x_prev:
+            cmd.request_lie_down = True         # X = 趴下
+        inp.gp_x_prev = x_pressed
         rt_pressed = getattr(st, "rt", 0.0) > gp_bark_rt_threshold
         if rt_pressed and not inp.gp_rt_prev:
             cmd.request_bark = True
@@ -177,6 +189,8 @@ def poll_user_command(gp, kb, fsm, inp: InputState, *,
         cmd.request_sit = True                  # 坐下(sit_pose.json)
     elif key in ('p', 'P'):
         cmd.request_lie_down = True             # 趴下(lie_down_pose.json)
+    elif key == '0':
+        cmd.request_go_zero = True              # 平滑回零(全轴→0)
     elif key in ('a', 'A'):
         cmd.request_abd_flare_toggle = True     # 站立四腿外展方向验证
     else:

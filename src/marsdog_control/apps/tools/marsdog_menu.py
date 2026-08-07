@@ -74,7 +74,10 @@ def _menu_static_test() -> int:
 
 
 def _menu_go_zero() -> int:
-    print("\n[平滑回零] 渐变 3s → 全轴到 0（含达妙/头）。")
+    print(
+        "\n[平滑回零] 渐变 3s → 全轴到 0（含达妙/头）；"
+        "增益=run_walk SoftTrot JOINT_GAINS×leg_kp_scale+trq_ff。"
+    )
     return _run_module(
         "marsdog_control.apps.tools.calibration.go_zero",
         ["--fade", "3", "--include-head"],

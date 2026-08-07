@@ -67,10 +67,13 @@ class RuntimeStatusDisplay:
         if lie_down_hold:
             if pose_hold_name == "sit":
                 sys.stdout.write(
-                    "\r  [SIT] 保持坐下姿势  z=起立  p=改趴下  q=退出      ")
+                    "\r  [SIT] 保持坐下姿势  z=起立  X/p=改趴下  LT/0=回零  q=退出      ")
+            elif pose_hold_name == "zero":
+                sys.stdout.write(
+                    "\r  [ZERO] 保持回零  LT/0=起立  X/p=改趴下  z=改坐下  q=退出      ")
             else:
                 sys.stdout.write(
-                    "\r  [LIE_DOWN] 保持趴下姿势  p=起立  z=改坐下  q=退出      ")
+                    "\r  [LIE_DOWN] 保持趴下姿势  X/p=起立  z=改坐下  LT/0=回零  q=退出      ")
         elif active_gait:
             tag = mode.upper()
             vel = getattr(active_gait, "vel_cmd", None)

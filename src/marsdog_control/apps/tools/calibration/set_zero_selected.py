@@ -30,14 +30,16 @@ from marsdog_control.apps.tools.calibration.set_zero_all import (
     set_zero_incos,
     set_zero_lz,
 )
-from marsdog_control.config.bus_config import (
-    BAUD,
-    DM_CAN_DEVICE,
-    EVO_CAN0_DEVICE,
-    INCOS_CAN_DEVICE,
-    LZ_CAN1_DEVICE,
-    LZ_SERIAL_DEVICE,
-)
+# Device paths: same SSOT as run_walk (get_device_config → bus_config).
+from marsdog_control.config.devices import get_device_config
+
+_dev = get_device_config()
+BAUD = _dev.baud
+DM_CAN_DEVICE = _dev.dm_can
+EVO_CAN0_DEVICE = _dev.evo_can
+INCOS_CAN_DEVICE = _dev.incos_can
+LZ_CAN1_DEVICE = _dev.lz_can_a
+LZ_SERIAL_DEVICE = _dev.lz_can_b
 from marsdog_control.config.joints import (
     DM_CAN_IDS,
     DM_MASTER_ID_BY_SLAVE,

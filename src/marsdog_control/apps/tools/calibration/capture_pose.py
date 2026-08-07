@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """交互式姿势捕获：拖动关节到位后按键保存。
 
+总线路径与 ``run_walk`` 相同：``RkMotorBoard`` → ``get_device_config()`` →
+``bus_config``（五路 USB-CAN）。
+
 流程:
   1. 打开全部电机总线并短暂使能，随后全部失能（可自由拖动）
   2. 手动把机器人摆成目标姿势

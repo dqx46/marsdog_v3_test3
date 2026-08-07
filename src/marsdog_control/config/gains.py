@@ -42,14 +42,14 @@ BRAND_DEFAULT_GAINS: Dict[str, Dict[str, float]] = {
 # Values above max were silently saturated in float_to_uint — table must match wire.
 JOINT_GAINS = {
     # Lz 前大腿: |err|~1.0° → 略加刚度; KD_MAX=5
-    "fl_hip_pitch":  {"kp": 115.0, "kd": 5.0, "trq_ff": 0.0},
-    "fr_hip_pitch":  {"kp": 115.0, "kd": 5.0, "trq_ff": 0.0},
+    "fl_hip_pitch":  {"kp": 155.0, "kd": 5.0, "trq_ff": 0.0},
+    "fr_hip_pitch":  {"kp": 155.0, "kd": 5.0, "trq_ff": 0.0},
     # Incos 前外展 (IDs 2/6): com_shift 横向移重全靠此轴; KD_MAX=5
-    "fl_thigh_roll": {"kp": 55.0,  "kd": 3.2, "trq_ff": 0.0},
-    "fr_thigh_roll": {"kp": 55.0,  "kd": 3.2, "trq_ff": 0.0},
+    "fl_thigh_roll": {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.0},
+    "fr_thigh_roll": {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.0},
     # Incos 前小腿 (IDs 3/7): 仍为最大 |err|
-    "fl_calf":       {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.35},
-    "fr_calf":       {"kp": 65.0,  "kd": 3.2, "trq_ff": 0.35},
+    "fl_calf":       {"kp": 75.0,  "kd": 3.2, "trq_ff": 0.35},
+    "fr_calf":       {"kp": 75.0,  "kd": 3.2, "trq_ff": 0.35},
     # 达妙 tarsus：DM_S2325 KD_MAX=5（旧表 kd=10 会被钳到 5）
     "fl_tarsus":     {"kp": 220.0, "kd": 5.0, "trq_ff": 0.0},
     "fr_tarsus":     {"kp": 220.0, "kd": 5.0, "trq_ff": 0.0},
@@ -67,7 +67,7 @@ JOINT_GAINS = {
     "neck_pitch":    {"kp": 30.0,  "kd": 5.0, "trq_ff": 0.0},
     "waist_yaw":     {"kp": 50.0,  "kd": 5.0, "trq_ff": 0.0},
     "waist_pitch":   {"kp": 60.0,  "kd": 5.0, "trq_ff": 0.0},
-    "waist_roll":    {"kp": 65.0,  "kd": 5.0, "trq_ff": 0.0},  # LZ KD_MAX=5
+    "waist_roll":    {"kp": 130.0,  "kd": 5.0, "trq_ff": 0.0},  # LZ KD_MAX=5
 }
 
 # ── Simulation (MuJoCo SI impedance Nm/rad, Nm·s/rad) ────────────────

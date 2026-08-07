@@ -69,7 +69,7 @@ class _FakeImuCtrl:
 def _state(**kw):
     base = dict(
         select=False, b=False, start=False, lb=False, rb=False,
-        lt=0.0, rt=0.0, ly=0.0, rx=0.0,
+        x=False, lt=0.0, rt=0.0, ly=0.0, rx=0.0,
         dpad_up=False, dpad_down=False,
     )
     base.update(kw)
@@ -106,6 +106,10 @@ class PollUserCommandTest(unittest.TestCase):
         self.assertFalse(cmd.request_sit)
         self.assertIsNone(dev)
 
+        cmd, dev = self._poll(kb=_FakeKb("0"))
+        self.assertTrue(cmd.request_go_zero)
+        self.assertIsNone(dev)
+
     def test_keyboard_dev_key_passthrough(self):
         cmd, dev = self._poll(kb=_FakeKb("+"))
         self.assertFalse(cmd.quit)
@@ -119,6 +123,20 @@ class PollUserCommandTest(unittest.TestCase):
 
         cmd, _ = self._poll(gp=gp, inp=inp)
         self.assertIsNone(cmd.request_mode)
+
+    def test_gamepad_lt_requests_go_zero_x_requests_lie_down(self):
+        inp = InputState()
+        cmd, _ = self._poll(gp=_FakeGp(_state(lt=0.8)), inp=inp)
+        self.assertTrue(cmd.request_go_zero)
+        self.assertFalse(cmd.request_lie_down)
+
+        cmd, _ = self._poll(gp=_FakeGp(_state(lt=0.9)), inp=inp)
+        self.assertFalse(cmd.request_go_zero)
+
+        inp2 = InputState()
+        cmd, _ = self._poll(gp=_FakeGp(_state(x=True)), inp=inp2)
+        self.assertTrue(cmd.request_lie_down)
+        self.assertFalse(cmd.request_go_zero)
 
     def test_gamepad_sticks_and_dpad(self):
         cmd, _ = self._poll(gp=_FakeGp(_state(ly=-0.5, rx=0.3, dpad_down=True)))

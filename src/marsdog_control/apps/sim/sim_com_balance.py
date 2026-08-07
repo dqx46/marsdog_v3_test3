@@ -66,7 +66,11 @@ except ImportError:
     HAS_VIEWER = False
 
 from marsdog_control.apps.sim.sim_walk import make_controllers  # noqa: E402
-from marsdog_control.config.gains import JOINT_GAINS, SIM_JOINT_GAINS  # noqa: E402
+from marsdog_control.config.gains import (  # noqa: E402
+    JOINT_GAINS,
+    SIM_JOINT_GAINS,
+    joint_gains_for,
+)
 from marsdog_control.config.joints import JOINT_MAP  # noqa: E402
 from marsdog_control.core.types import ControlOutput, MotionTarget, RobotMode  # noqa: E402
 from marsdog_control.input.user_input import KeyReader  # noqa: E402
@@ -383,7 +387,7 @@ def _bootstrap_stand(tool):
 
     Caller must set ``sys.argv`` to process-name + walk_cli remainder before call.
     """
-    gains = JOINT_GAINS if tool.real else SIM_JOINT_GAINS
+    gains = joint_gains_for("real" if tool.real else "sim")
     args = _build_args()
 
     runtime_state = WalkRuntimeState(joint_gains=gains)
@@ -638,35 +642,8 @@ def _run_sim(tool, ctx) -> int:
 def _run_real(tool, ctx) -> int:
     from marsdog_control.backends.real import RealRobotBackend
     from marsdog_control.compat import legacy_dir
-    from marsdog_control.config.bus_config import (
-        BAUD,
-        DM_CAN_DEVICE,
-        EVO_CAN0_DEVICE,
-        IMU_BAUD,
-        IMU_DEVICE,
-        INCOS_CAN_DEVICE,
-        LZ_CAN1_DEVICE,
-        LZ_SERIAL_DEVICE,
-    )
-    from marsdog_control.config.joints import (
-        ALL_IDS,
-        DM_MASTER_ID_BY_SLAVE,
-        INCOS_CAN_IDS,
-        JOINT_BY_ID,
-        JOINT_MAP as _JM,
-    )
-    from marsdog_control.hardware.board import RkMotorBoard
-    from marsdog_control.hardware.motors.damiao import MotorDamiao
-    from marsdog_control.hardware.motors.evo import MotorEvo
-    from marsdog_control.hardware.motors.incos import MotorIncos
-    from marsdog_control.hardware.motors.lingzu import MotorLz
-    from marsdog_control.hardware.sensors.imu_wt901 import ImuWT901
-    from marsdog_control.runtime.walk_bringup import (
-        bringup_imu,
-        bringup_motors_and_board,
-        fade_to_stand,
-    )
-    from marsdog_control.runtime.walk_services import WalkServices
+    from marsdog_control.runtime.walk_bringup import fade_to_stand
+    from marsdog_control.runtime.walk_hw import open_walk_hardware
 
     stand = ctx["stand"]
     planner = ctx["planner"]
@@ -677,55 +654,27 @@ def _run_real(tool, ctx) -> int:
     lift_blocked_msg: list = []
     max_tilt = math.radians(max(0.0, float(tool.max_tilt_deg)))
 
-    real_joints = [j for j in _JM if j.bus != "none"]
-    dm_joints = [j for j in _JM if j.mtype == "dm"]
-    svc = WalkServices(
-        runtime_state=runtime_state,
-        real_joints=real_joints,
-        resource_dir=str(legacy_dir()),
+    real_joints = [j for j in JOINT_MAP if j.bus != "none"]
+    bundle = open_walk_hardware(
+        runtime_state,
+        clear_fault=False,
         control_hz=CONTROL_HZ,
-        clock=time,
-    )
-
-    imu, imu_ok = bringup_imu(
-        imu_cls=ImuWT901,
-        imu_device=IMU_DEVICE,
-        imu_baud=IMU_BAUD,
-        angle_tau_s=0.0,
-        gyro_tau_s=0.0,
+        with_imu=True,
         require_imu=False,
-    )
-    hw = bringup_motors_and_board(
-        motor_lz_cls=MotorLz,
-        motor_evo_cls=MotorEvo,
-        motor_damiao_cls=MotorDamiao,
-        motor_incos_cls=MotorIncos,
-        board_cls=RkMotorBoard,
-        lz_serial_device=LZ_SERIAL_DEVICE,
-        lz_can1_device=LZ_CAN1_DEVICE,
-        evo_can0_device=EVO_CAN0_DEVICE,
-        dm_can_device=DM_CAN_DEVICE,
-        incos_can_device=INCOS_CAN_DEVICE,
-        baud=BAUD,
-        joint_map=JOINT_MAP,
-        dm_joints=dm_joints,
-        dm_master_id_by_slave=DM_MASTER_ID_BY_SLAVE,
-        incos_can_ids=INCOS_CAN_IDS,
-        joint_by_id=JOINT_BY_ID,
-        all_ids=ALL_IDS,
-        shutdown_motors=svc.shutdown_motors,
         clock=time,
     )
-    if hw is None:
+    if bundle is None:
         print("[CoMBal] motor bring-up failed")
         return 1
 
-    lz, evo, dm, incos = hw.lz, hw.evo, hw.dm, hw.incos
-    svc.board = hw.board
-    runtime_state.board = hw.board
-    runtime_state.dm.fixed_targets.clear()
-    runtime_state.dm.fixed_targets.update(hw.dm_fixed_targets)
-    online = hw.online
+    lz, evo, dm, incos = bundle.lz, bundle.evo, bundle.dm, bundle.incos
+    svc = bundle.svc
+    online = bundle.online
+    imu, imu_ok = bundle.imu, bundle.imu_ok
+    hot_hold = getattr(bundle.session, "hot_hold", None)
+    if hot_hold is not None:
+        hot_hold.stop()
+        bundle.session.hot_hold = None
 
     print("[CoMBal] reading positions...")
     cur_pos = svc.read_positions(lz, evo, incos)

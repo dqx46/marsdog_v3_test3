@@ -245,13 +245,16 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
     if cmd.request_abd_flare_toggle:
         toggle_abd_flare(ctx)
 
-    if cmd.request_lie_down or cmd.request_sit:
+    if cmd.request_lie_down or cmd.request_sit or cmd.request_go_zero:
         if ctx.abd_flare_active:
             clear_abd_flare(ctx, reason="切姿势前收回外展")
-        pose = "sit" if cmd.request_sit else "lie_down"
-        # 同周期两键都按：坐下优先（少见）
-        if cmd.request_sit and cmd.request_lie_down:
+        # 同周期多键：回零 > 坐下 > 趴下
+        if cmd.request_go_zero:
+            pose = "zero"
+        elif cmd.request_sit:
             pose = "sit"
+        else:
+            pose = "lie_down"
         lie_res = ctx.lie_down_session.handle_request(
             fsm=ctx.fsm,
             online=ctx.online,
@@ -297,8 +300,13 @@ def tick_walk_loop(ctx: WalkLoopContext) -> bool:
     mode = mode_str(ctx.fsm)
     if ctx.tail is not None:
         if ctx.lie_down_session.hold:
-            tail_mode = ("sit" if ctx.lie_down_session.active_pose == "sit"
-                         else "lie_down")
+            pose = ctx.lie_down_session.active_pose
+            if pose == "sit":
+                tail_mode = "sit"
+            elif pose == "zero":
+                tail_mode = "stand"
+            else:
+                tail_mode = "lie_down"
         elif active_trot is not None:
             tail_mode = "trot"
         else:

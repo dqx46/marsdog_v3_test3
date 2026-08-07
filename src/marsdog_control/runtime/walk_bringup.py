@@ -555,9 +555,9 @@ def open_operator_inputs(
     print("─" * 52)
     if gp:
         print("  手柄: 左摇杆Y=前进/后退  START=切模式  LB/RB=步频")
-        print("        LT=趴下  RT=狗叫/狗头动作")
+        print("        LT=平滑回零  X=趴下  RT=狗叫/狗头动作")
         print("        SELECT/B=紧急退出")
-    print("  键盘: SPACE/s=切换  z=坐下  p=趴下  a=四腿外展验证  +/-=步频  u/d=体高  f/v=摆幅")
+    print("  键盘: SPACE/s=切换  z=坐下  p=趴下  0=回零  a=四腿外展验证  +/-=步频  u/d=体高  f/v=摆幅")
     print("        [ ]=P增益调度  ; '=kp  , .=触地kp(柔顺A)  n m=重力补偿(柔顺B)  "
           "k l=roll配平  i=状态  q/ESC=退出")
     print("─" * 52 + "\n")

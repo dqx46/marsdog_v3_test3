@@ -43,8 +43,8 @@ PROBE_LZ_CAN_B_IDS = [10, 11, 13, 14, 15, 16, 21]
 PROBE_EVO_IDS = [9, 12, 18, 19, 20]
 
 # 因克斯独立 USB-CAN 的固定 Hub 物理口 (电机未上电时靠此识别)
-# 2026-07-30 扫描: fc880000 口 1.1.1 = 因克斯 (旧注释里的 1.1.4 已过时)
-INCOS_CAN_ID_PATH = "platform-fc880000.usb-usb-0:1.1.1:1.0"
+# 2026-08-07 扫描: xhci 口 1.2.3 = 因克斯 (其余口已被 LZ-A/B、EVO、IMU、DM 认领)
+INCOS_CAN_ID_PATH = "platform-xhci-hcd.0.auto-usb-0:1.2.3:1.0"
 
 INCOS_QUERY_POSITION = bytes([0xE1, 0x01])
 

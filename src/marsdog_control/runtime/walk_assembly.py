@@ -34,6 +34,7 @@ def assemble_walk_loop_context(
     bark_with_mouth: Callable,
     build_lie_down_target: Callable,
     build_sit_target: Optional[Callable] = None,
+    build_zero_target: Optional[Callable] = None,
     read_positions: Callable,
     smooth_transition: Callable,
     backend: Optional[RobotBackend] = None,
@@ -56,6 +57,7 @@ def assemble_walk_loop_context(
     lie_down_session = LieDownSession(
         build_target=build_lie_down_target,
         build_sit_target=build_sit_target,
+        build_zero_target=build_zero_target,
         read_positions=read_positions,
         smooth_transition=smooth_transition,
         dm_fixed_targets=dm_fixed,

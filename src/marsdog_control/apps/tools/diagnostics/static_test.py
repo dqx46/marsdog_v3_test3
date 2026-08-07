@@ -30,12 +30,20 @@ import struct
 
 from marsdog_control.hardware.motors.can_serial import CanSerial, CAN_EFF_FLAG
 from marsdog_control.hardware.motors.damiao import MotorDamiao
-from marsdog_control.config.bus_config import (
-    LZ_CAN_A_DEVICE, LZ_CAN_B_DEVICE, INCOS_CAN_DEVICE,
-    EVO_CAN_DEVICE, DM_CAN_DEVICE, BAUD,
-    IMU_DEVICE, IMU_BAUD, GAMEPAD_DEVICE,
-    SPEAKER_ALSA_DEVICE,
-)
+# Device paths: same SSOT as run_walk (get_device_config → bus_config).
+from marsdog_control.config.devices import get_device_config
+
+_dev = get_device_config()
+LZ_CAN_A_DEVICE = _dev.lz_can_a
+LZ_CAN_B_DEVICE = _dev.lz_can_b
+INCOS_CAN_DEVICE = _dev.incos_can
+EVO_CAN_DEVICE = _dev.evo_can
+DM_CAN_DEVICE = _dev.dm_can
+BAUD = _dev.baud
+IMU_DEVICE = _dev.imu
+IMU_BAUD = _dev.imu_baud
+GAMEPAD_DEVICE = _dev.gamepad
+SPEAKER_ALSA_DEVICE = _dev.speaker_alsa
 from marsdog_control.config.joints import (
     JOINT_BY_ID, LZ_CAN_A_IDS, LZ_CAN_B_IDS,
     EVO_CAN_IDS, DM_CAN_IDS, INCOS_CAN_IDS,

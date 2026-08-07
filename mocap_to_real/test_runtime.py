@@ -344,7 +344,7 @@ class TestLieDownCommand(unittest.TestCase):
 
         self.assertEqual(target, {1: 0.123, 21: -0.456})
 
-    def test_left_trigger_edge_requests_lie_down(self):
+    def test_left_trigger_edge_requests_go_zero(self):
         fsm = SimpleNamespace(
             args=SimpleNamespace(turn_sign=1.0),
             set_period=lambda p: None,
@@ -352,17 +352,18 @@ class TestLieDownCommand(unittest.TestCase):
         )
         inp = walk._InputState()
         base = dict(select=False, b=False, start=False, lb=False, rb=False,
-                    ly=0.0, rx=0.0, dpad_up=False, dpad_down=False)
+                    x=False, ly=0.0, rx=0.0, dpad_up=False, dpad_down=False)
 
         cmd, _ = poll_user_command(
             _FakeGamepad(SimpleNamespace(**base, lt=0.8)), None, fsm, inp
         )
-        self.assertTrue(cmd.request_lie_down)
+        self.assertTrue(cmd.request_go_zero)
+        self.assertFalse(cmd.request_lie_down)
 
         cmd, _ = poll_user_command(
             _FakeGamepad(SimpleNamespace(**base, lt=0.9)), None, fsm, inp
         )
-        self.assertFalse(cmd.request_lie_down)
+        self.assertFalse(cmd.request_go_zero)
 
         poll_user_command(
             _FakeGamepad(SimpleNamespace(**base, lt=0.0)), None, fsm, inp
@@ -370,7 +371,28 @@ class TestLieDownCommand(unittest.TestCase):
         cmd, _ = poll_user_command(
             _FakeGamepad(SimpleNamespace(**base, lt=0.8)), None, fsm, inp
         )
+        self.assertTrue(cmd.request_go_zero)
+
+    def test_x_button_edge_requests_lie_down(self):
+        fsm = SimpleNamespace(
+            args=SimpleNamespace(turn_sign=1.0),
+            set_period=lambda p: None,
+            trot_fwd=SimpleNamespace(period=0.9),
+        )
+        inp = walk._InputState()
+        base = dict(select=False, b=False, start=False, lb=False, rb=False,
+                    lt=0.0, ly=0.0, rx=0.0, dpad_up=False, dpad_down=False)
+
+        cmd, _ = poll_user_command(
+            _FakeGamepad(SimpleNamespace(**base, x=True)), None, fsm, inp
+        )
         self.assertTrue(cmd.request_lie_down)
+        self.assertFalse(cmd.request_go_zero)
+
+        cmd, _ = poll_user_command(
+            _FakeGamepad(SimpleNamespace(**base, x=True)), None, fsm, inp
+        )
+        self.assertFalse(cmd.request_lie_down)
 
 class TestSafety(unittest.TestCase):
     def test_joint_limit_clamp(self):

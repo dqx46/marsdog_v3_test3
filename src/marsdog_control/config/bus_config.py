@@ -41,28 +41,28 @@ _DEVICE_ALIASES = {
 }
 
 _DEVICE_FALLBACKS = {
-    # 2026-07-31 串口扫描实测 (xhci-hcd.0.auto)。换物理插口后请重新运行 setup_usb_devices.py。
-    # 口1.2.1=灵足CAN-A, 1.2.2=EVO, 1.2.3=灵足CAN-B
-    # 口1.3.1=因克斯, 1.3.2=未识别备用, 1.3.3=达妙u2can(ACM)
-    # 口1.4=WT901 IMU
+    # 2026-08-07 串口扫描实测 (xhci-hcd.0.auto)。换物理插口后请重新运行 setup_usb_devices。
+    # 口1.2.1=灵足CAN-B, 1.2.2=灵足CAN-A, 1.2.3=因克斯
+    # 口1.3=WT901 IMU
+    # 口1.4.2=达妙u2can(ACM), 1.4.3=泉智博EVO
     "lz_can_a": [
-        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.2.1:1.0-port0",
-    ],
-    "evo_can": [
         "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.2.2:1.0-port0",
     ],
     "lz_can_b": [
-        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.2.3:1.0-port0",
+        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.2.1:1.0-port0",
+    ],
+    "evo_can": [
+        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.4.3:1.0-port0",
     ],
     # CH340 无唯一序列号：禁止用 by-id/ttyUSBn 回退，否则会误绑到灵足/EVO 的口。
     "incos_can": [
-        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.3.1:1.0-port0",
+        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.2.3:1.0-port0",
     ],
     "imu": [
-        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.4:1.0-port0",
+        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.3:1.0-port0",
     ],
     "dm_can": [
-        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.3.3:1.0",
+        "/dev/serial/by-path/platform-xhci-hcd.0.auto-usb-0:1.4.2:1.0",
         "/dev/serial/by-id/usb-HDSC_CDC_Device_00000000050C-if00",
         "/dev/ttyACM0",
     ],

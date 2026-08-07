@@ -113,6 +113,11 @@ def build_sit_target(online: Iterable[int], pose_path: str,
     }
 
 
+def build_zero_target(online: Iterable[int]) -> dict:
+    """构造平滑回零目标: 在线关节电机角全部到 0（含头/腰/达妙）。"""
+    return {int(mid): 0.0 for mid in online}
+
+
 __all__ = [
     "NON_BODY_LIE_MOTOR_IDS",
     "LIE_DOWN_TARGETS_RAD",
@@ -123,4 +128,5 @@ __all__ = [
     "load_lie_down_pose",
     "build_lie_down_target",
     "build_sit_target",
+    "build_zero_target",
 ]
