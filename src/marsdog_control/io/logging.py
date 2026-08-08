@@ -20,7 +20,8 @@ from marsdog_control.config.joints import (
     JOINT_BY_NAME as JBN,
 )
 from marsdog_control.control.executor import resolve_gains
-from marsdog_control.motion.kinematics import front_foot_pitch_from_motor, motor_to_urdf
+from marsdog_control.hardware.mapping import motor_to_urdf_wired
+from marsdog_control.motion.kinematics import front_foot_pitch_from_motor
 
 
 @dataclass
@@ -239,13 +240,13 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
         mid = j.motor_id
         sample = samples.get(mid)
         # targets[] 是 URDF 关节角；驱动反馈 / DM command_q 是电机角。
-        # 日志统一写 URDF 帧，否则 sign=-1 / gear≠1 的关节会出现百来度假误差。
+        # 日志统一写 URDF 帧（含实机接线极性，与 backends.real 同源）。
         if j.mtype == "dm":
             if mid in targets:
                 tgt = targets[mid]
             elif mid in runtime.dm_fixed_targets:
                 # bringup 缓存的是电机角，这里转到 URDF 再记。
-                tgt = motor_to_urdf(j, runtime.dm_fixed_targets[mid])
+                tgt = motor_to_urdf_wired(j, runtime.dm_fixed_targets[mid])
             else:
                 tgt = float('nan')
             if sample is not None:
@@ -303,13 +304,13 @@ def write_log(writer, t_s, mode, lz, evo, dm, incos, targets, dt_ms,
                 ff_nm = runtime.joint_gains.get(j.name, {}).get("trq_ff", 0.0)
         act_motor = act_motor if act_motor is not None else float('nan')
         tq = tq if tq is not None else float('nan')
-        act = (motor_to_urdf(j, act_motor)
+        act = (motor_to_urdf_wired(j, act_motor)
                if math.isfinite(act_motor) else float('nan'))
         if cmd_motor is not None and math.isfinite(cmd_motor):
-            cmd = motor_to_urdf(j, cmd_motor)
+            cmd = motor_to_urdf_wired(j, cmd_motor)
         else:
             cmd = tgt
-        cmd_dq = (motor_to_urdf(j, cmd_dq_motor)
+        cmd_dq = (motor_to_urdf_wired(j, cmd_dq_motor)
                   if math.isfinite(cmd_dq_motor) else float('nan'))
         err_val = (math.degrees(act - tgt)
                    if (tgt is not None and math.isfinite(tgt)

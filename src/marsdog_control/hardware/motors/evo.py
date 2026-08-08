@@ -76,43 +76,6 @@ class MotorEvo:
 
     # ── init ─────────────────────────────────────────────────────
 
-    def init(self, interface="can0"):
-        if not self._can.begin(interface):
-            return False
-
-        probe = bytes([0xFF] * 7 + [CMD_REST_STATE])
-        self._can.flush()
-        for mid in MEVO_KNOWN_IDS:
-            self._can.send_msg(probe, 8, mid)
-            time.sleep(0.0005)
-        time.sleep(0.005)
-
-        # read responses (30ms window)
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < 0.030:
-            result = self._can.read_msg()
-            if result is None:
-                break
-            can_id, dlc, data = result
-            if can_id & CAN_EFF_FLAG:
-                continue  # skip RS05 extended frames
-            if len(data) >= 8 and data[0] > STATUS_PTM + 3:
-                continue  # skip ECHO
-            mid = can_id & 0x7FF
-            if 1 <= mid <= MAX_ID and mid not in self._active_ids:
-                self._active_ids.append(mid)
-                self._parse_feedback(mid, data)
-                print(f"[MotorEvo] motor {mid} online")
-
-        if not self._active_ids:
-            print("[MotorEvo] no motor responded")
-            return False
-
-        self._running = True
-        self._thread = threading.Thread(target=self._recv_loop, daemon=True)
-        self._thread.start()
-        return True
-
     def _send_raw(self, data, dlc, can_id):
         """Send a standard CAN frame via CanSerial or CanBus."""
         if self._use_serial:
@@ -131,6 +94,93 @@ class MotorEvo:
         else:
             self._can.flush()
 
+    def _accept_feedback_frame(self, can_id, data):
+        """Return motor_id if frame is a valid EVO feedback, else None."""
+        if can_id & CAN_EFF_FLAG:
+            return None
+        if can_id & 0x80000000:
+            return None
+        if len(data) < 8 or data[0] > STATUS_PTM + 3:
+            return None  # echo / non-status
+        mid = can_id & 0x7FF
+        if mid not in MEVO_KNOWN_IDS:
+            return None
+        return mid
+
+    def _register_online(self, mid, data, *, tag=""):
+        """Parse feedback and mark motor online (idempotent)."""
+        if mid not in self._active_ids:
+            self._active_ids.append(mid)
+            suffix = f" ({tag})" if tag else ""
+            print(f"[MotorEvo] motor {mid} online{suffix}")
+        self._parse_feedback(mid, data)
+        self._want_motor[mid - 1] = True
+
+    def _probe_one(self, mid, probe, *, timeout_s=0.050):
+        """Probe a single EVO ID (same strategy as static_test.probe_evo).
+
+        Flush → send → wait up to ``timeout_s`` for that ID's reply.
+        Returns True if this motor answered (already-online counts as success).
+        """
+        if mid in self._active_ids and self.is_connected[mid - 1]:
+            return True
+        with self._lock:
+            self._flush_raw()
+            if not self._send_raw(probe, 8, mid):
+                return False
+        deadline = time.monotonic() + float(timeout_s)
+        while time.monotonic() < deadline:
+            with self._lock:
+                result = self._recv_raw()
+            if result is None:
+                time.sleep(0.001)
+                continue
+            can_id, _dlc, data = result
+            got = self._accept_feedback_frame(can_id, data)
+            if got is None:
+                continue
+            # 总线可能夹杂其它 EVO 应答；目标 ID 优先登记，其它也顺手收下
+            self._register_online(
+                got, data, tag="serial" if self._use_serial else "")
+            if got == mid:
+                return True
+        return mid in self._active_ids
+
+    def _discover_all(self, probe, *, tag="", rounds=2, timeout_s=0.050):
+        """Sequential per-ID discover + retry missing (fixes batch-probe misses)."""
+        for attempt in range(max(1, int(rounds))):
+            missing = [m for m in MEVO_KNOWN_IDS if m not in self._active_ids]
+            if not missing:
+                break
+            if attempt > 0:
+                print(f"[MotorEvo] retry discover missing={missing}")
+            for mid in missing:
+                self._probe_one(mid, probe, timeout_s=timeout_s)
+        found = sorted(self._active_ids)
+        miss = [m for m in MEVO_KNOWN_IDS if m not in self._active_ids]
+        if miss:
+            print(f"[MotorEvo] still missing after discover: {miss}")
+        elif tag:
+            print(f"[MotorEvo] discover complete {len(found)}/{len(MEVO_KNOWN_IDS)} {tag}")
+        return bool(self._active_ids)
+
+    def init(self, interface="can0"):
+        if not self._can.begin(interface):
+            return False
+
+        probe = bytes([0xFF] * 7 + [CMD_REST_STATE])
+        if not self._discover_all(probe, tag="can", rounds=2, timeout_s=0.050):
+            print("[MotorEvo] no motor responded")
+            return False
+
+        for mid in self._active_ids:
+            self._want_motor[mid - 1] = True
+
+        self._running = True
+        self._thread = threading.Thread(target=self._recv_loop, daemon=True)
+        self._thread.start()
+        return True
+
     def init_serial(self, device="/dev/ttyUSB1", baud=921600, *, clear_fault=True):
         """Open USB-CAN serial as CAN0 and enable EVO motors via CanSerial."""
         self._serial = CanSerial()
@@ -140,44 +190,20 @@ class MotorEvo:
         self._use_serial = True
 
         # REST clears fault but drops enable; MOTOR keeps torque on hot re-enter.
+        # 探测必须逐 ID（对齐 static_test）：旧批量连发+短收窗会漏腰 yaw=19。
         probe_cmd = CMD_REST_STATE if clear_fault else CMD_MOTOR_STATE
         probe = bytes([0xFF] * 7 + [probe_cmd])
-        with self._lock:
-            self._flush_raw()
-            for mid in MEVO_KNOWN_IDS:
-                self._send_raw(probe, 8, mid)
-                time.sleep(0.0005)
-        time.sleep(0.05)
-
-        t0 = time.monotonic()
-        while time.monotonic() - t0 < 0.100:
-            with self._lock:
-                result = self._recv_raw()
-            if result is None:
-                time.sleep(0.002)
-                continue
-            can_id, dlc, data = result
-            if can_id & 0x80000000:
-                continue  # skip LZ extended frames
-            if len(data) >= 8 and data[0] > STATUS_PTM + 3:
-                continue  # echo
-            mid = can_id & 0x7FF
-            if 1 <= mid <= MAX_ID and mid not in self._active_ids:
-                self._active_ids.append(mid)
-                self._parse_feedback(mid, data)
-                print(f"[MotorEvo] motor {mid} online (serial)")
-            if len(self._active_ids) == len(MEVO_KNOWN_IDS):
-                break  # 全部找到提前退出
-
-        if not self._active_ids:
+        if not self._discover_all(probe, tag="serial", rounds=2, timeout_s=0.050):
             print("[MotorEvo] no motor responded on serial")
             return False
 
         # Critical: keepalive sends REST when _want_motor is False. Hot-start
         # probes with MOTOR_STATE but must mark want=True or the recv loop will
         # periodically disable hips/waist (seen as soft-drop + stand-end snap).
-        for mid in self._active_ids:
+        # Also arm want for known IDs so a late reply can be adopted in recv_loop.
+        for mid in MEVO_KNOWN_IDS:
             self._want_motor[mid - 1] = True
+        for mid in self._active_ids:
             if not clear_fault:
                 try:
                     q = self.position[mid - 1]
@@ -372,7 +398,11 @@ class MotorEvo:
                     continue
                 mid = can_id & 0x7FF
                 if mid in MEVO_KNOWN_IDS and mid not in found:
-                    self._parse_feedback(mid, rdata)
+                    # 迟到应答也登记进 _active_ids（init 漏检后的补救）
+                    if mid not in self._active_ids:
+                        self._register_online(mid, rdata, tag="late")
+                    else:
+                        self._parse_feedback(mid, rdata)
                     found.add(mid)
                 if len(found) == len(MEVO_KNOWN_IDS):
                     break

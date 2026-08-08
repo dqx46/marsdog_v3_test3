@@ -106,7 +106,7 @@ def test_apply_schedule_sets_vel_cmd():
 
 
 def test_schedule_spot_turn_is_abduction_led():
-    """vx≈0 + yaw_rate → Unitree spot: amp=0, abduct budget, real wz."""
+    """vx≈0 + yaw_rate → Unitree spot: amp=0; Spot 几何与前进/走+转解耦。"""
     env = GaitEnvelope.from_wbc_soft_trot(
         amp_front=0.050,
         amp_rear=0.068,
@@ -117,6 +117,12 @@ def test_schedule_spot_turn_is_abduction_led():
         turn_y_amp=0.040,
         turn_amp_diff=0.012,
         vx_deadzone=0.12,
+        # Spot 显式独立值（故意不同于前进 step_h / period）
+        spot_period=1.60,
+        spot_stance=0.55,
+        spot_step_h_front=0.022,
+        spot_step_h_rear=0.022,
+        spot_yaw_step_rad=0.45,
     )
     sch = SoftTrotSchedule(env)
     spot = sch.map(VelocityCommand(vx=0.0, yaw_rate=0.32))
@@ -125,9 +131,11 @@ def test_schedule_spot_turn_is_abduction_led():
     assert spot.turn_amp_diff == 0.0
     assert abs(spot.spot_yaw_step - 0.45) < 1e-9
     assert spot.spot_y_hold_max >= 0.04
-    assert abs(spot.period - 0.85) < 1e-9
+    # Spot 用自己的 period/step_h，不吃前进 0.58 / 0.045
+    assert abs(spot.period - 1.60) < 1e-9
     assert abs(spot.stance_ratio - 0.55) < 1e-9
-    assert 0.035 <= spot.step_height_front <= 0.055
+    assert abs(spot.step_height_front - 0.022) < 1e-9
+    assert abs(spot.step_height - 0.022) < 1e-9
     assert abs(spot.vel_cmd[0]) < 1e-9
     assert spot.vel_cmd[2] > 0.15
     assert spot.spot_dx_scale == 0.0
@@ -140,6 +148,14 @@ def test_schedule_spot_turn_is_abduction_led():
     idle = sch.map(VelocityCommand(vx=0.0, yaw_rate=0.04))
     assert idle.spot_turn is False
     assert idle.amp_front == 0.0
+
+    # 走+转仍吃 cruise turn_*；周期走前进层，绝不是 Spot 的 1.60
+    cruise = sch.map(VelocityCommand(vx=0.10, yaw_rate=0.20))
+    assert cruise.spot_turn is False
+    assert abs(cruise.turn_amp_diff - 0.012) < 1e-9
+    assert abs(cruise.turn_y_amp - 0.040) < 1e-9
+    assert abs(cruise.period - 1.60) > 0.2
+
 
 
 def test_apply_schedule_sets_turn_geometry():

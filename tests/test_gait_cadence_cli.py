@@ -115,6 +115,28 @@ class TestGaitCadenceCli(unittest.TestCase):
         self.assertAlmostEqual(float(nat_fwd.period), preset_T, places=2)
         self.assertAlmostEqual(fsm._nat_schedule.env.period_nom, preset_T, places=2)
 
+    def test_spot_cli_decoupled_from_forward(self):
+        """--gait-period-turn / --spot-* 只改 Spot，前进 period/step 不动。"""
+        preset_T = float(NATURAL_SOFT_TROT_WBC["period"])
+        args, recipe, cfg, nat_fwd, fsm = _trace_soft_trot([
+            "--gait-period-turn", "1.60",
+            "--spot-step-h", "0.022",
+            "--spot-lift-extra", "0.0",
+        ])
+        self.assertAlmostEqual(cfg.spot_period, 1.60)
+        self.assertAlmostEqual(float(nat_fwd.spot_period), 1.60)
+        self.assertAlmostEqual(fsm._nat_schedule.env.spot_period, 1.60)
+        self.assertAlmostEqual(fsm._nat_schedule.env.spot_step_h_front, 0.022)
+        # 前进层保持预设
+        self.assertAlmostEqual(float(nat_fwd.period), preset_T, places=2)
+        self.assertAlmostEqual(fsm._nat_schedule.env.period_nom, preset_T, places=2)
+        # Spot schedule 用独立几何
+        from marsdog_control.motion.gait_schedule import VelocityCommand
+        spot = fsm._nat_schedule.map(VelocityCommand(vx=0.0, yaw_rate=0.32))
+        self.assertTrue(spot.spot_turn)
+        self.assertAlmostEqual(spot.period, 1.60)
+        self.assertAlmostEqual(spot.step_height_front, 0.022)
+
     def test_cli_stance_and_period_reach_schedule(self):
         """--gait-period / --stance override SoftTrot without editing recipes."""
         args, recipe, cfg, nat_fwd, fsm = _trace_soft_trot(

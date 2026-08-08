@@ -249,8 +249,21 @@ class SpotYawStepper:
         stance_ratio: float = 0.75,
         phase_offsets: Optional[Dict[str, float]] = None,
     ) -> Tuple[float, float]:
-        _ = (t, period, stance_ratio, phase_offsets)
-        return (0.0, 0.0)
+        """Body-frame CoM shift into support diagonal (same event map as SoftTrot).
+
+        Returns ``(dx, dy)``; ``dy>0`` = body left. Position layer and WBC
+        both consume this when ``com_shift_max_m`` is nonzero.
+        """
+        _ = (stance_ratio, phase_offsets)
+        amp = float(self.cfg.com_shift_max_m)
+        if abs(amp) <= 1e-9 or period <= 1e-9:
+            return (0.0, 0.0)
+        from marsdog_control.motion.foot_trajectory import (
+            lateral_offset_soft_trot_com,
+        )
+        blend = 0.15
+        dy = lateral_offset_soft_trot_com(t, period, amp, blend)
+        return (0.0, float(dy))
 
     def yaw_error(self) -> float:
         return float(self.yaw_des - self.yaw)

@@ -464,6 +464,7 @@ def fade_to_stand(
     kp_start: float = 1.0,
     kp_end: float = 1.0,
     stop_pose_hold: Optional[Callable] = None,
+    dm_fixed_targets: Optional[dict] = None,
 ) -> StandReadyResult:
     """Fade into the stand pose and optionally build a direction-test base.
 
@@ -472,12 +473,16 @@ def fade_to_stand(
 
     Pose-hold (if any) is stopped only after the first fade frame is sent, so
     there is no MIT gap at fade start.
+
+    After a successful fade, ``dm_fixed_targets`` is synced to the stand motor
+    angles so later hold/recover does not snap Damiao back to the boot probe.
     """
     # stand.get_targets() 是纯 URDF 空间; cur_pos 来自 board.get_angles() 是电机空间。
     # smooth_transition / recover 直连 send_all(电机空间), 因此这里必须先把站姿目标
     # 经唯一真源映射 urdf_pose_to_motor 转到电机空间(等价于主控 backend.send 的 j.sign),
     # 否则 sign=-1 的左侧关节会被当电机值直发而反向(淡入错→主循环snap正→Ctrl+C又错)。
     from marsdog_control.backends.real import urdf_pose_to_motor
+    from marsdog_control.hardware.mapping import sync_dm_fixed_targets
     stand_pos = stand.get_targets(0)                # URDF 空间(供 direction_test_base / 返回给主循环)
     stand_motor = urdf_pose_to_motor(stand_pos)     # 电机空间(供 fade/recover 实际下发)
     print(
@@ -496,9 +501,14 @@ def fade_to_stand(
         return StandReadyResult(ok=False)
     if stop_pose_hold is not None:
         stop_pose_hold()
+    # Fade 已把达妙拉到站立角：立刻刷新 fixed，避免 recover/hold 打回探测角。
+    synced = sync_dm_fixed_targets(dm_fixed_targets, stand_motor)
+    if synced:
+        print(f"[dm] fixed_targets ← stand {synced}（防止起立后打回探测角）")
     if not recover_lz_stand_faults(lz, evo, dm, incos, online, stand_motor):
         shutdown_motors(lz, evo, dm, incos)
         return StandReadyResult(ok=False)
+    sync_dm_fixed_targets(dm_fixed_targets, stand_motor)
     print("[ok] 已站立\n")
 
     direction_test_base = None

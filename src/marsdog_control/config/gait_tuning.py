@@ -15,6 +15,9 @@ Operator cheat-sheet
    → 命令行 ``--flag``（记入 ``_explicit_cli``，不被预设盖掉）。
    SoftTrot 步频优先用 ``--gait-period SEC`` 或 ``--gait-hz HZ``
    （同时覆盖 ``period`` / ``nat_period``）。
+   Spot 原地转用 ``--spot-period`` / ``--spot-step-h*``（与前进无关；
+   ``--gait-period-turn`` 是 ``--spot-period`` 别名）。
+   走+转用 ``--turn-amp-diff`` / ``--turn-y-amp`` / ``--cruise-turn-*``。
 
 ``GaitCliDefaults`` 是 **未进 RuntimeConfig** 的步态细参 argparse 默认值单点；
 形状键与 ``NATURAL_SOFT_TROT`` 对齐（见 ``tests/test_gait_tuning_sync.py``）。
@@ -95,15 +98,31 @@ class GaitCliDefaults:
     retract_peak: float = 0.42
     lift_peak: float = 0.48
 
-    # turn layer
+    # cruise turn layer (走+转) — 绝不写入 Spot
     turn_amp_diff: float = 0.012
     turn_y_amp: float = 0.040
     turn_smooth: float = 0.015
-    turn_waist_yaw: float = 0.40
+    turn_waist_yaw: float = 0.0
     waist_yaw_turn_sign: float = 1.0
     cruise_turn_scale: float = 0.6
     cruise_turn_yamp: float = 1.0
     turn_sign: float = 1.0
+    # Spot 原地转 — 与前进 period/step_h 完全独立（见 NATURAL_SOFT_TROT）
+    spot_period: float = 1.20
+    # 对齐前进慢走支撑比；0.55 对角悬空过多易倾倒
+    spot_stance: float = 0.70
+    spot_step_h_front: float = 0.024
+    spot_step_h_rear: float = 0.024
+    spot_yaw_step_rad: float = 0.45
+    spot_y_hold_max_m: float = 0.055
+    spot_lift_extra: float = 0.0
+    # 位控横向移重，符号/事件型与前进 com_shift 一致
+    spot_com_shift_m: float = 0.004
+    spot_wz_scale: float = 0.40
+    spot_turn_scale: float = 1.0
+    # Spot 腰：bias≈23° + pulse≈7°（硬件软限 ±1.2rad）；0=关
+    spot_waist_yaw: float = 0.40
+    spot_waist_pulse: float = 0.12
     throttle_min_scale: float = 0.45
 
     # misc experimental (still gait-adjacent CLI)
@@ -178,6 +197,13 @@ def soft_trot_shape_keys() -> frozenset:
         "swing_clearance_per_rad",
         "com_shift_m", "com_shift_blend",
         "rear_clearance_m",
+        # Spot 原地转（与前进/走+转几何键互不覆盖）
+        "spot_period", "spot_stance",
+        "spot_step_h_front", "spot_step_h_rear",
+        "spot_yaw_step_rad", "spot_y_hold_max_m",
+        "spot_lift_extra", "spot_com_shift_m",
+        "spot_wz_scale", "spot_turn_scale",
+        "spot_waist_yaw", "spot_waist_pulse",
     })
 
 

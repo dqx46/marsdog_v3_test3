@@ -206,6 +206,55 @@ def parse_args():
         help="[步频·别名] SoftTrot/Natural 步频(Hz); 仅换算为 period=1/HZ，与 --gait-period 二选一。"
              "例: --gait-hz 0.833",
     )
+    p.add_argument(
+        "--spot-period", "--gait-period-turn",
+        type=float, default=GAIT.spot_period, metavar="SEC",
+        dest="spot_period",
+        help="[Spot原地转·独立] 周期(秒)，与前进 --gait-period 无关。"
+             "别名 --gait-period-turn。默认 %.2fs" % GAIT.spot_period,
+    )
+    p.add_argument(
+        "--spot-step-h", type=float, default=None, metavar="M",
+        help="[Spot原地转·独立] 前后抬腿高度(m); 同时设 front/rear。"
+             "默认 front=%.1fcm rear=%.1fcm" % (
+                 GAIT.spot_step_h_front * 100, GAIT.spot_step_h_rear * 100),
+    )
+    p.add_argument(
+        "--spot-step-h-front", type=float, default=GAIT.spot_step_h_front,
+        metavar="M",
+        help="[Spot原地转·独立] 前腿抬腿高度(m)",
+    )
+    p.add_argument(
+        "--spot-step-h-rear", type=float, default=GAIT.spot_step_h_rear,
+        metavar="M",
+        help="[Spot原地转·独立] 后腿抬腿高度(m)",
+    )
+    p.add_argument(
+        "--spot-stance", type=float, default=GAIT.spot_stance,
+        help="[Spot原地转·独立] 支撑相比, 默认 %.2f（对齐前进慢走）"
+             % GAIT.spot_stance,
+    )
+    p.add_argument(
+        "--spot-yaw-step", type=float, default=GAIT.spot_yaw_step_rad,
+        dest="spot_yaw_step_rad", metavar="RAD",
+        help="[Spot原地转·独立] 每周期偏航步长(rad), 默认 %.2f" % GAIT.spot_yaw_step_rad,
+    )
+    p.add_argument(
+        "--spot-lift-extra", type=float, default=GAIT.spot_lift_extra,
+        metavar="M",
+        help="[Spot原地转·独立] 摆动额外抬腿(m), 叠在 spot-step-h 上; 默认 0",
+    )
+    p.add_argument(
+        "--spot-y-hold-max", type=float, default=GAIT.spot_y_hold_max_m,
+        dest="spot_y_hold_max_m", metavar="M",
+        help="[Spot原地转·独立] 髋外展 hold 上限(m)",
+    )
+    p.add_argument(
+        "--spot-com-shift", type=float, default=GAIT.spot_com_shift_m,
+        dest="spot_com_shift_m", metavar="M",
+        help="[Spot原地转·独立] 横向质心移重(m), 事件型同前进 --com-shift；"
+             "默认 %.3f (=前进4mm), 0=关" % GAIT.spot_com_shift_m,
+    )
     p.add_argument("--step-h",      type=float, default=CLI.step_h,
                    help="后腿抬腿高度 (m), 默认 2cm")
     p.add_argument("--step-h-front", type=float, default=None,
@@ -228,18 +277,29 @@ def parse_args():
                    help="[航向保持] 符号, 若纠反了(越纠越偏/转圈)改成 -1")
     p.add_argument("--yaw-hold-limit", type=float, default=CLI.yaw_hold_limit,
                    help="[航向保持] turn_cmd 自动修正上限, 默认0.4 (防止搞反时猛转)")
-    # [转向独立层] 以下只影响转向, 完全不动前进步态参数(解耦: 调转向不用重调前进)
+    # [走+转·独立层] 只影响有前进时的差速/跨步；绝不改 Spot / 前进 period·step_h
     p.add_argument("--turn-amp-diff", type=float, default=GAIT.turn_amp_diff,
-                   help="[转向] 左右步幅差 (m), 越大转越急, 默认0.020")
+                   help="[走+转] 左右步幅差 (m), 越大转越急, 默认%.3f" % GAIT.turn_amp_diff)
     p.add_argument("--turn-y-amp", type=float, default=GAIT.turn_y_amp,
-                   help="[转向] 转向跨步(髋外展)幅度 (m), 默认0.025")
+                   help="[走+转] 转向跨步(髋外展)幅度 (m), 默认%.3f" % GAIT.turn_y_amp)
     p.add_argument("--turn-smooth", type=float, default=GAIT.turn_smooth,
-                   help="[转向] 转向指令低通系数, 越小越柔和不猛甩, 默认0.015")
+                   help="[走+转] 转向指令低通系数, 越小越柔和不猛甩, 默认0.015")
     p.add_argument("--turn-waist-yaw", type=float, default=GAIT.turn_waist_yaw,
-                   help="[转向] 转向时腰部扭曲最大角 (rad), 默认0.35")
+                   help="[走+转] 腰扭转最大角 (rad)，不动 Spot；默认 0")
+    p.add_argument(
+        "--spot-waist-yaw", type=float, default=GAIT.spot_waist_yaw, metavar="RAD",
+        help="[Spot原地转·独立] 腰偏置 (rad)；默认 %.2f (≈23°)。为 0 时禁止 pulse"
+             % GAIT.spot_waist_yaw,
+    )
+    p.add_argument(
+        "--spot-waist-pulse", type=float, default=GAIT.spot_waist_pulse,
+        metavar="RAD",
+        help="[Spot原地转·独立] 腰正弦脉冲幅值 (rad)；仅当 --spot-waist-yaw≠0 生效；"
+             "默认 %.2f" % GAIT.spot_waist_pulse,
+    )
     p.add_argument("--cruise-turn-scale", type=float, default=GAIT.cruise_turn_scale,
-                   help="[走+转] 边走边转时的转向权限缩放(相对原地转), 越大转得越急, "
-                        "默认0.6; 原地转(只右摇杆)不受影响")
+                   help="[走+转] 边走边转时的转向权限缩放, 越大转得越急, "
+                        "默认0.6; 原地转(只右摇杆)走 Spot 层，不受此影响")
     p.add_argument("--cruise-vx", type=float, default=0.100,
                    help="[前进] 巡航速度 m/s (SI)。摇杆只做走/停: 过阈值后固定用该速度 "
                         "(与仿真 --vx 对齐, 默认 0.10≈新菜谱中速; 满幅约 0.13); "
@@ -596,6 +656,12 @@ def parse_args():
                 explicit_dests.add(action.dest)
     args = p.parse_args()
     args._explicit_cli = explicit_dests
+    # --spot-step-h 同时覆盖前后（独立于前进 --step-h）
+    if "spot_step_h" in explicit_dests and args.spot_step_h is not None:
+        args.spot_step_h_front = float(args.spot_step_h)
+        args.spot_step_h_rear = float(args.spot_step_h)
+        explicit_dests |= {"spot_step_h_front", "spot_step_h_rear"}
+        args._explicit_cli = explicit_dests
     # sim-parity before cadence/presets so SoftTrot recipe cannot revive patches.
     apply_sim_parity(args)
     apply_gait_cadence_cli(args)

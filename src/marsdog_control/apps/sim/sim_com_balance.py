@@ -690,6 +690,7 @@ def _run_real(tool, ctx) -> int:
         smooth_transition=svc.smooth_transition,
         recover_lz_stand_faults=svc.recover_lz_stand_faults,
         shutdown_motors=svc.shutdown_motors,
+        dm_fixed_targets=runtime_state.dm.fixed_targets,
     )
     if not ready.ok:
         print("[CoMBal] fade-to-stand failed")

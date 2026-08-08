@@ -352,9 +352,20 @@ class StableTrot(GaitController):
         self.spot_hip_half_width = 0.075
         self.spot_y_hold_max_m = 0.055
         self.spot_dx_scale = 0.0
-        # Spot waist: bias≈23° + pulse≈7° (hw soft-limit ±1.2rad / ±69°).
+        # Spot waist: bias≈23° + pulse≈7°；bias=0 时强制 pulse=0（防遗留发疯）。
         self.spot_waist_yaw_rad = 0.40
         self.spot_waist_yaw_pulse_rad = 0.12
+        # Spot 几何：由 apply_spot_params / schedule 写入；默认与前进解耦。
+        self.spot_period = 1.20
+        self.spot_stance = 0.70
+        self.spot_step_h_front = 0.024
+        self.spot_step_h_rear = 0.024
+        self.spot_lift_extra_m = 0.0
+        self.spot_com_shift_m = 0.004
+        self.spot_wz_scale = 0.40
+        self.spot_turn_scale = 1.0
+        # 旧 turn_period 混用已废除；schedule 切 Spot 时直接写 self.period。
+        self.turn_period = None
         self._PHASE_OFFSET_CRUISE = dict(type(self)._PHASE_OFFSET)
         self._PHASE_OFFSET = dict(self._PHASE_OFFSET_CRUISE)
         from marsdog_control.motion.spot_yaw_step import SpotYawStepConfig, SpotYawStepper
@@ -372,6 +383,10 @@ class StableTrot(GaitController):
     def turn_cmd(self, v):
         self._turn_cmd = _clamp(v, -1.0, 1.0)
 
+    def _effective_period(self) -> float:
+        """当前控制器 period（Spot/前进由 schedule 各自写入，不再与 turn 混叠）。"""
+        return float(self.period)
+
     def _swing_z(self, swing_t: float, step_h: float) -> float:
         """三段式摆动 Z: 快起(30%) → 巡航(40%) → 柔落(30%), C1 连续。"""
         return _ft.three_phase_swing_z(swing_t, step_h, self._RISE_END, self._CRUISE_END)
@@ -379,7 +394,7 @@ class StableTrot(GaitController):
     def _anti_roll_diag_scale(self, t: float) -> float:
         """按对角支撑相缩放 anti_roll: FL+RR 负 roll 大 → 加大伸腿。"""
         return _ft.anti_roll_diag_scale(
-            t, self.period, self.stance_ratio,
+            t, self._effective_period(), self.stance_ratio,
             self.anti_roll_asym_neg, self.anti_roll_asym_pos)
 
     def _leg_xz(self, leg: str, t: float, turn: float = 0.0) -> tuple:
@@ -390,7 +405,8 @@ class StableTrot(GaitController):
         X 轨迹形状纯几何部分见 `foot_trajectory.stable_trot_x`；摆动相抬腿高度
         走 `self._swing_z`(虚方法, 子类可重写), 保留多态分发。
         """
-        phase = (t / self.period + self._PHASE_OFFSET[leg]) % 1.0
+        period = self._effective_period()
+        phase = (t / period + self._PHASE_OFFSET[leg]) % 1.0
         is_front = leg.startswith('f')
         is_left = leg.endswith('l')
 
@@ -427,7 +443,7 @@ class StableTrot(GaitController):
         if getattr(self, "spot_turn_active", False):
             # Cache filled by _leg_xz earlier this tick (avoid double half-step).
             return self._spot_xy_cache.get(leg, (0.0, 0.0))[1]
-        phase = (t / self.period + self._PHASE_OFFSET[leg]) % 1.0
+        phase = (t / self._effective_period() + self._PHASE_OFFSET[leg]) % 1.0
         return _ft.leg_y_turn(
             leg, phase, turn, self.stance_ratio,
             self.max_turn_y_amp, self.turn_y_gain)
@@ -475,16 +491,17 @@ class StableTrot(GaitController):
         if hasattr(self, "spot_yaw_step_rad"):
             self._spot.cfg.yaw_step_rad = float(self.spot_yaw_step_rad) or self._spot.cfg.yaw_step_rad
         self._spot.update_pose(t, yaw=yaw, base_xy=base_xy, vel_xy=vel_xy, wz=0.0)
+        period = self._effective_period()
         self._spot.tick(
             t,
             float(self._turn_filtered),
-            float(self.period),
+            float(period),
             stance_ratio=float(self.stance_ratio),
         )
 
     def _spot_foot_xy(self, leg: str, t: float, turn: float) -> tuple:
         """Thin adapter → SpotYawStepper cache (tick already ran)."""
-        return self._spot.foot_xy(leg, t, turn, self.period)
+        return self._spot.foot_xy(leg, t, turn, self._effective_period())
 
     def spot_leg_in_swing(self, leg: str) -> bool:
         if not getattr(self, "spot_turn_active", False):
@@ -504,18 +521,21 @@ class StableTrot(GaitController):
         if not getattr(self, "spot_turn_active", False):
             return (0.0, 0.0)
         return self._spot.com_shift_xy(
-            t, self.period, self.stance_ratio, self._PHASE_OFFSET)
+            t, self._effective_period(), self.stance_ratio, self._PHASE_OFFSET)
 
     def _lateral_offset(self, t: float) -> float:
         """横向 CoM 偏移。
 
-        Spot: Y of support-triangle CoM shift (unloads the swing leg).
+        Spot: 事件型移重（同 SoftTrot com_shift），压到支撑对角。
         Cruise: diagonal trot sway (unchanged).
         """
         if getattr(self, "spot_turn_active", False):
-            # CoM unload via executor MPC/base_acc only — abd sway on top of
-            # world-hold twist was stacking and tipping in catch.
-            return 0.0
+            amp = float(getattr(self, "spot_com_shift_m", 0.0))
+            if abs(amp) <= 1e-9:
+                return 0.0
+            blend = float(getattr(self, "com_shift_blend", 0.15))
+            return _ft.lateral_offset_soft_trot_com(
+                t, self.period, amp, blend)
         return _ft.lateral_offset_trot(t, self.period, self.stance_ratio, self.lateral_sway)
 
     def _expected_diagonal_roll(self, t: float) -> float:
@@ -591,12 +611,10 @@ class StableTrot(GaitController):
         z_front_base = -(self.body_height - _FRONT_HIP_OFFSET)
         z_rear_base  = -(self.body_height - _REAR_HIP_OFFSET)
 
-        if getattr(self, "spot_turn_active", False):
-            lat_offset = 0.0  # sway fights tangential abduction
-        else:
-            lat_offset = self._lateral_offset(t) * ramp
+        # Spot 也走位控横向移重（WBC 关闭时 MPC 路径无效）；用 spot_com_shift_m
+        lat_offset = self._lateral_offset(t) * ramp
 
-            # Raibert 反应式校正 — 全程连续(不分stance/swing) + 低通滤波
+        # Raibert 反应式校正 — 全程连续(不分stance/swing) + 低通滤波
         if imu_state and not getattr(self, "spot_turn_active", False):
             roll = imu_state.get('roll', 0.0)
             gyro_roll = imu_state.get('gyro_roll', 0.0)
@@ -789,25 +807,24 @@ class StableTrot(GaitController):
         targets[j_wp.motor_id] = _clamp(
             self.waist_pitch_offset, j_wp.limit_lo, j_wp.limit_hi)
         
-        # waist_yaw: turn>0(左转) → 正角，前半身朝转向侧拧（与腿同向）。
-        # spot 用中等偏置+对角脉冲；勿用旧 ±20° 硬锁。
+        # waist_yaw: turn>0(左转) → 正角。Spot bias/pulse 各自独立；任一为 0 则不算 pulse。
         j_wy = JOINT_BY_NAME["waist_yaw"]
         if getattr(self, "spot_turn_active", False):
             turn = float(self._turn_filtered)
-            bias = (
-                turn
-                * float(self.spot_waist_yaw_rad)
-                * ramp
-                * self.waist_yaw_turn_sign
-            )
-            bp = (t / max(1e-6, self.period)) % 1.0
-            pulse = (
-                turn
-                * float(self.spot_waist_yaw_pulse_rad)
-                * math.sin(2.0 * math.pi * bp)
-                * ramp
-                * self.waist_yaw_turn_sign
-            )
+            bias_amp = float(getattr(self, "spot_waist_yaw_rad", 0.0))
+            pulse_amp = float(getattr(self, "spot_waist_yaw_pulse_rad", 0.0))
+            # 安全门：无偏置权限时禁止遗留 pulse（旧 bug：bias=0 仍 ±0.12rad 正弦）
+            if abs(bias_amp) < 1e-9:
+                pulse_amp = 0.0
+            bias = turn * bias_amp * ramp * self.waist_yaw_turn_sign
+            if abs(pulse_amp) > 1e-9:
+                bp = (t / max(1e-6, self.period)) % 1.0
+                pulse = (
+                    turn * pulse_amp * math.sin(2.0 * math.pi * bp)
+                    * ramp * self.waist_yaw_turn_sign
+                )
+            else:
+                pulse = 0.0
             wy_turn = bias + pulse
         else:
             wy_turn = (
@@ -1112,9 +1129,16 @@ class NaturalSoftTrot(NaturalTrot):
         self.com_shift_blend = float(com_shift_blend)
 
     def _lateral_offset(self, t: float) -> float:
-        """SoftTrot 横向移重：优先事件型 com_shift，否则回退半正弦 lateral_sway。"""
+        """SoftTrot 横向移重：优先事件型 com_shift，否则回退半正弦 lateral_sway。
+
+        Spot 用独立 spot_com_shift_m（不吃前进 com_shift_m）。
+        """
         if getattr(self, "spot_turn_active", False):
-            return 0.0
+            amp = float(getattr(self, "spot_com_shift_m", 0.0))
+            if abs(amp) <= 1e-9:
+                return 0.0
+            return _ft.lateral_offset_soft_trot_com(
+                t, self.period, amp, self.com_shift_blend)
         if abs(self.com_shift_m) > 1e-6:
             return _ft.lateral_offset_soft_trot_com(
                 t, self.period, self.com_shift_m, self.com_shift_blend)
@@ -1164,8 +1188,10 @@ class NaturalSoftTrot(NaturalTrot):
         if is_swing:
             lift = self._swing_z(u, sh)
             if getattr(self, "spot_turn_active", False):
-                # Same clearance budget front/rear so diagonal catch looks paired.
-                lift += 0.014 * self._mj_bump(u, self.lift_peak)
+                # Spot 专属额外抬腿；默认 0，绝不借用前进 rear_clearance。
+                extra = float(getattr(self, "spot_lift_extra_m", 0.0))
+                if extra > 1e-9:
+                    lift += extra * self._mj_bump(u, self.lift_peak)
             elif not is_front and self.rear_clearance_m > 0.0:
                 lift += self.rear_clearance_m * self._mj_bump(u, self.lift_peak)
         else:

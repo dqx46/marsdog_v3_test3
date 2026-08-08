@@ -296,14 +296,21 @@ def assemble_walk_control_stack(
     (stand, trot_fwd, trot_bwd, pace_fwd, pace_bwd,
      nat_fwd, walk_fwd, jump_fwd) = controllers.as_tuple()
 
-    print(f"[转向层] 步幅差={gait_cfg.turn_amp_diff*100:.1f}cm "
+    print(f"[走+转层] 步幅差={gait_cfg.turn_amp_diff*100:.1f}cm "
           f"跨步={gait_cfg.turn_y_amp*100:.1f}cm "
           f"平滑={gait_cfg.turn_smooth:.3f} 腰yaw={gait_cfg.turn_waist_yaw:.2f} "
-          f"(独立于前进参数)")
-    print(f"[走+转] 边走边转权限×{drive.cruise_turn_scale:.2f} "
-          f"蟹步增益={drive.cruise_turn_yamp:.2f} "
-          f"| 转向符号={drive.turn_sign:+.0f} "
-          f"腰符号={gait_cfg.waist_yaw_turn_sign:+.0f}")
+          f"权限×{drive.cruise_turn_scale:.2f} 蟹步={drive.cruise_turn_yamp:.2f} "
+          f"| 符号={drive.turn_sign:+.0f}/{gait_cfg.waist_yaw_turn_sign:+.0f}")
+    print(f"[Spot原地转] T={gait_cfg.spot_period:.2f}s "
+          f"stance={gait_cfg.spot_stance:.0%} "
+          f"抬腿前/后={gait_cfg.spot_step_h_front*100:.1f}/"
+          f"{gait_cfg.spot_step_h_rear*100:.1f}cm "
+          f"extra={gait_cfg.spot_lift_extra*100:.1f}cm "
+          f"com_shift={gait_cfg.spot_com_shift_m*1000:+.1f}mm "
+          f"yaw_step={gait_cfg.spot_yaw_step_rad:.2f}rad "
+          f"腰bias/pulse={gait_cfg.spot_waist_yaw:.2f}/"
+          f"{gait_cfg.spot_waist_pulse:.2f}rad "
+          f"(与前进/走+转完全解耦)")
 
     if trot_flag and not natural_active:
         start_mode = RobotMode.TROT

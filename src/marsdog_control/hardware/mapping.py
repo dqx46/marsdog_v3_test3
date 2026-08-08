@@ -28,6 +28,43 @@ EVO_JOINTS = [j for j in JOINT_MAP if j.mtype == "evo"]
 DM_JOINTS = [j for j in JOINT_MAP if j.mtype == "dm"]
 INCOS_JOINTS = [j for j in JOINT_MAP if j.mtype == "incos"]
 
+# 仅实机接线极性（× 在 sign×gear 之外）。仿真 / JointDesc.sign 不动。
+# send / read / CSV 日志必须同源，否则会出现 act≈−cmd、err≈−2×cmd 的假「发软」。
+REAL_WIRE_POLARITY: dict[int, float] = {
+    19: -1.0,  # waist_yaw
+}
+
+
+def wire_polarity(motor_id: int) -> float:
+    return float(REAL_WIRE_POLARITY.get(int(motor_id), 1.0))
+
+
+def urdf_to_motor_wired(joint, urdf_angle: float) -> float:
+    """URDF → 实机电机角（含接线极性）。"""
+    from marsdog_control.motion.kinematics import urdf_to_motor
+    return float(urdf_to_motor(joint, urdf_angle)) * wire_polarity(joint.motor_id)
+
+
+def motor_to_urdf_wired(joint, motor_val: float) -> float:
+    """实机电机角 → URDF（与 urdf_to_motor_wired 互逆）。"""
+    from marsdog_control.motion.kinematics import motor_to_urdf
+    pol = wire_polarity(joint.motor_id)
+    return float(motor_to_urdf(joint, float(motor_val) / pol))
+
+
+def sync_dm_fixed_targets(dm_fixed: Optional[dict], motor_pose: Mapping[int, float]) -> list[int]:
+    """把达妙 fixed_targets 同步为当前站立/目标电机角，避免 hold 打回开机探测角。"""
+    if not dm_fixed or not motor_pose:
+        return []
+    updated: list[int] = []
+    for j in DM_JOINTS:
+        mid = j.motor_id
+        if mid not in motor_pose:
+            continue
+        dm_fixed[mid] = float(motor_pose[mid])
+        updated.append(mid)
+    return updated
+
 
 def dm_wire_gains(joint) -> tuple[float, float, float]:
     """JOINT_GAINS (关节空间) → 达妙线端 kp/kd（外置减速 /N²，与 batch 路径同源）。"""
@@ -193,6 +230,11 @@ __all__ = [
     "EVO_JOINTS",
     "DM_JOINTS",
     "INCOS_JOINTS",
+    "REAL_WIRE_POLARITY",
+    "wire_polarity",
+    "urdf_to_motor_wired",
+    "motor_to_urdf_wired",
+    "sync_dm_fixed_targets",
     "MitBatch",
     "BoardCommandBatches",
     "build_board_command_batches",

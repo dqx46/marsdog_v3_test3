@@ -152,6 +152,7 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
         kp_start=0.3 if soft_disable else 1.0,
         kp_end=1.0,
         stop_pose_hold=svc.stop_pose_hold,
+        dm_fixed_targets=getattr(svc, "dm_fixed_targets", None),
     )
     if not stand_ready.ok:
         return
@@ -159,10 +160,12 @@ def run_walk_session(ctx: WalkSessionContext) -> None:
 
     # Hold stand pose through IMU/gamepad setup — log showed waist_pitch
     # drifting +15° then snapping when the main loop resumed after ~2s gap.
+    # 达妙必须用 stand_motor（已与 fixed 同步），禁止再用开机探测角覆盖。
     stand_hold = dict(stand_ready.stand_motor) if stand_ready.stand_motor else {}
     if stand_hold:
-        if dm is not None:
-            stand_hold.update(getattr(svc, "dm_fixed_targets", {}) or {})
+        from marsdog_control.hardware.mapping import sync_dm_fixed_targets
+        sync_dm_fixed_targets(
+            getattr(svc, "dm_fixed_targets", None), stand_hold)
         svc.start_pose_hold(lz, evo, dm, incos, stand_hold)
         print("[hold] 站立后保位 ON（覆盖 IMU/手柄初始化空窗）")
 

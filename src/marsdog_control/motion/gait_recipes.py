@@ -106,11 +106,48 @@ class ControllerSet:
 
 
 def apply_turn_params(controller, cfg: GaitStackConfig) -> None:
+    """走+转 / 差速层。绝不写 Spot 字段，也不改前进 period/step_h。"""
     controller.max_turn_amp_diff = cfg.turn_amp_diff
     controller.max_turn_y_amp = cfg.turn_y_amp
     controller.turn_filter_alpha = cfg.turn_smooth
     controller.max_turn_waist_yaw = cfg.turn_waist_yaw
     controller.waist_yaw_turn_sign = cfg.waist_yaw_turn_sign
+    # 兼容旧字段：转向周期已迁到 spot_period，禁止再混进前进 period。
+    controller.turn_period = None
+
+
+def apply_spot_params(controller, cfg: GaitStackConfig) -> None:
+    """Spot 原地转专用层 — 与前进/走+转变量完全隔离。"""
+    controller.spot_period = float(getattr(cfg, "spot_period", 1.20))
+    controller.spot_stance = float(getattr(cfg, "spot_stance", 0.70))
+    controller.spot_step_h_front = float(
+        getattr(cfg, "spot_step_h_front", 0.024))
+    controller.spot_step_h_rear = float(
+        getattr(cfg, "spot_step_h_rear", 0.024))
+    controller.spot_yaw_step_rad = float(
+        getattr(cfg, "spot_yaw_step_rad", 0.45))
+    controller.spot_y_hold_max_m = float(
+        getattr(cfg, "spot_y_hold_max_m", 0.055))
+    controller.spot_lift_extra_m = float(
+        getattr(cfg, "spot_lift_extra", 0.0))
+    controller.spot_com_shift_m = float(
+        getattr(cfg, "spot_com_shift_m", 0.004))
+    controller.spot_wz_scale = float(getattr(cfg, "spot_wz_scale", 0.40))
+    controller.spot_turn_scale = float(
+        getattr(cfg, "spot_turn_scale", 1.0))
+    # Spot 腰：独立于 --turn-waist-yaw。bias=0 时强制 pulse=0。
+    bias = float(getattr(cfg, "spot_waist_yaw", 0.40))
+    pulse = float(getattr(cfg, "spot_waist_pulse", 0.12))
+    if abs(bias) < 1e-9:
+        pulse = 0.0
+    controller.spot_waist_yaw_rad = bias
+    controller.spot_waist_yaw_pulse_rad = pulse
+    spot = getattr(controller, "_spot", None)
+    if spot is not None and hasattr(spot, "cfg"):
+        spot.cfg.com_shift_max_m = float(controller.spot_com_shift_m)
+        spot.cfg.stance_ratio = float(controller.spot_stance)
+        spot.cfg.y_hold_max_m = float(controller.spot_y_hold_max_m)
+        spot.cfg.yaw_step_rad = float(controller.spot_yaw_step_rad)
 
 
 def _set_waist_offsets(controller, cfg: GaitStackConfig) -> None:
@@ -427,6 +464,9 @@ def build_controller_set(
     if apply_turn:
         for controller in (fwd, bwd, nat_fwd):
             apply_turn_params(controller, cfg)
+        # Spot 只挂 SoftTrot/Natural（Walk/Jump 永不 spot）
+        apply_spot_params(nat_fwd, cfg)
+        apply_spot_params(fwd, cfg)
 
     return ControllerSet(
         stand, fwd, bwd, pace_fwd, pace_bwd, nat_fwd, walk_fwd, jump_fwd,
@@ -654,10 +694,25 @@ NATURAL_SOFT_TROT = {
     "tarsus_lead_fl_ms": 0.0,
     "tarsus_lead_fr_ms": 0.0,
     "dm_dq_feedforward": False,
-    # Spot-turn / cruise turn
+    # ── 走+转（cruise turn）—— 只影响有 vx 时的差速/跨步；不动 Spot ──
     "turn_y_amp": 0.040,
     "turn_amp_diff": 0.012,
-    "turn_waist_yaw": 0.40,
+    "turn_waist_yaw": 0.0,  # 走+转腰；与 Spot 腰解耦（旧默认 0.40 易发疯）
+    # ── Spot 原地转 —— 自有几何；禁止读 period/step_h/turn_amp_* ──
+    # 抬腿默认贴近 SoftTrot 前进高度；勿再硬编码 4.5cm / +14mm。
+    "spot_period": 1.20,
+    "spot_stance": 0.70,  # 对齐前进慢走；0.55 易倾倒
+    "spot_step_h_front": 0.024,
+    "spot_step_h_rear": 0.024,
+    "spot_yaw_step_rad": 0.45,
+    "spot_y_hold_max_m": 0.055,
+    "spot_lift_extra": 0.0,
+    "spot_com_shift_m": 0.004,  # 同前进 com_shift；位控层移重
+    "spot_wz_scale": 0.40,
+    "spot_turn_scale": 1.0,
+    # Spot 腰：bias≈23° + 对角脉冲≈7°；与走+转 turn_waist_yaw 解耦
+    "spot_waist_yaw": 0.40,
+    "spot_waist_pulse": 0.12,
     "kp_base_roll": 68.0,
     "kd_base_roll": 20.0,
     "lateral_vel_damp": 14.0,

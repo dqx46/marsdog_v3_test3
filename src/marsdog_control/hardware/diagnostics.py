@@ -146,9 +146,20 @@ def recover_lz_stand_faults(
 
         cur = read_positions_fn(lz, evo, incos)
         if dm is not None:
-            cur.update(dm_fixed_targets)
+            from marsdog_control.config.joints import JOINT_BY_ID
+            from marsdog_control.hardware.mapping import sync_dm_fixed_targets
+            # 达妙起终点都用站立角（fade 后已 sync），recover 不再二次大行程拉脚踝。
+            for mid, q in stand_pos.items():
+                j = JOINT_BY_ID.get(mid)
+                if j is not None and j.mtype == "dm":
+                    cur[mid] = float(q)
+            for mid, q in (dm_fixed_targets or {}).items():
+                cur.setdefault(mid, q)
         smooth_transition_fn(
             lz, evo, dm, incos, cur, stand_pos, 1.0, label="recover-stand")
+        if dm is not None:
+            from marsdog_control.hardware.mapping import sync_dm_fixed_targets
+            sync_dm_fixed_targets(dm_fixed_targets, stand_pos)
         time.sleep(0.1)
 
     remaining = find_lz_recoverable_faults(

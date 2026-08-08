@@ -154,6 +154,19 @@ class GaitStackConfig:
     turn_smooth: float
     turn_waist_yaw: float
     waist_yaw_turn_sign: float
+    # Spot 原地转（与 gait_period_turn 旧混用解耦）
+    spot_period: float
+    spot_stance: float
+    spot_step_h_front: float
+    spot_step_h_rear: float
+    spot_yaw_step_rad: float
+    spot_y_hold_max_m: float
+    spot_lift_extra: float
+    spot_com_shift_m: float
+    spot_wz_scale: float
+    spot_turn_scale: float
+    spot_waist_yaw: float
+    spot_waist_pulse: float
 
     @classmethod
     def from_args(cls, args: Any) -> "GaitStackConfig":
@@ -247,6 +260,27 @@ class GaitStackConfig:
             turn_waist_yaw=float(_g(args, "turn_waist_yaw", GAIT.turn_waist_yaw)),
             waist_yaw_turn_sign=float(_g(
                 args, "waist_yaw_turn_sign", GAIT.waist_yaw_turn_sign)),
+            spot_period=float(_g(args, "spot_period", GAIT.spot_period)),
+            spot_stance=float(_g(args, "spot_stance", GAIT.spot_stance)),
+            spot_step_h_front=float(_g(
+                args, "spot_step_h_front", GAIT.spot_step_h_front)),
+            spot_step_h_rear=float(_g(
+                args, "spot_step_h_rear", GAIT.spot_step_h_rear)),
+            spot_yaw_step_rad=float(_g(
+                args, "spot_yaw_step_rad", GAIT.spot_yaw_step_rad)),
+            spot_y_hold_max_m=float(_g(
+                args, "spot_y_hold_max_m", GAIT.spot_y_hold_max_m)),
+            spot_lift_extra=float(_g(
+                args, "spot_lift_extra", GAIT.spot_lift_extra)),
+            spot_com_shift_m=float(_g(
+                args, "spot_com_shift_m", GAIT.spot_com_shift_m)),
+            spot_wz_scale=float(_g(args, "spot_wz_scale", GAIT.spot_wz_scale)),
+            spot_turn_scale=float(_g(
+                args, "spot_turn_scale", GAIT.spot_turn_scale)),
+            spot_waist_yaw=float(_g(
+                args, "spot_waist_yaw", GAIT.spot_waist_yaw)),
+            spot_waist_pulse=float(_g(
+                args, "spot_waist_pulse", GAIT.spot_waist_pulse)),
         )
 
 

@@ -90,11 +90,11 @@ class GaitEnvelope:
     # When True: any |vx| above stop uses recipe amp/period/stance/step at full
     # (teleop engage-cruise). Stick depth and cruise_vx no longer reshape gait.
     lock_geometry: bool = False
-    # Spot: Raibert plant-hold turn (swing → ω×r, stance HOLD).
-    spot_period: float = 0.85
-    spot_stance: float = 0.55
-    spot_step_h_front: float = 0.045
-    spot_step_h_rear: float = 0.045
+    # Spot 原地转 — 与 cruise amp/period/step_h / cruise_turn_* 完全隔离。
+    spot_period: float = 1.20
+    spot_stance: float = 0.70
+    spot_step_h_front: float = 0.024
+    spot_step_h_rear: float = 0.024
     spot_yaw_step_rad: float = 0.45
     spot_dx_scale: float = 0.0
     spot_turn_amp_diff_m: float = 0.0
@@ -102,7 +102,7 @@ class GaitEnvelope:
     spot_turn_y_gain: float = 0.0
     spot_wz_scale: float = 0.40
     spot_y_hold_max_m: float = 0.055
-    spot_com_shift_m: float = 0.0
+    spot_com_shift_m: float = 0.004
 
     @staticmethod
     def _stance_band(
@@ -153,6 +153,16 @@ class GaitEnvelope:
         turn_y_amp: Optional[float] = None,
         turn_amp_diff: Optional[float] = None,
         lock_geometry: bool = False,
+        # Spot 原地转（可选；缺省用 dataclass 独立默认，绝不回落到前进参数）
+        spot_period: Optional[float] = None,
+        spot_stance: Optional[float] = None,
+        spot_step_h_front: Optional[float] = None,
+        spot_step_h_rear: Optional[float] = None,
+        spot_yaw_step_rad: Optional[float] = None,
+        spot_y_hold_max_m: Optional[float] = None,
+        spot_com_shift_m: Optional[float] = None,
+        spot_wz_scale: Optional[float] = None,
+        spot_turn_scale: Optional[float] = None,
     ) -> "GaitEnvelope":
         sh_f = float(step_h_front) if step_h_front is not None else 0.024
         sh_r = float(step_h_rear) if step_h_rear is not None else max(sh_f, 0.034)
@@ -188,6 +198,8 @@ class GaitEnvelope:
                 classic_lo=0.50, classic_hi=0.62,
             )
             tms = float(throttle_min_scale)
+        # Spot defaults from dataclass — never derive from forward period/step_h.
+        _spot_defaults = cls()
         return cls(
             amp_front_max=float(amp_front),
             amp_rear_max=float(amp_rear),
@@ -212,19 +224,36 @@ class GaitEnvelope:
             vx_engage=float(vx_engage),
             vx_deadzone=float(vx_deadzone),
             lock_geometry=lock,
-            # Spot: Raibert plant-hold (swing → ω×r, stance HOLD).
-            spot_period=0.85,
-            spot_stance=0.55,
-            spot_step_h_front=0.045,
-            spot_step_h_rear=0.045,
-            spot_yaw_step_rad=0.45,
+            spot_period=float(
+                spot_period if spot_period is not None
+                else _spot_defaults.spot_period),
+            spot_stance=float(
+                spot_stance if spot_stance is not None
+                else _spot_defaults.spot_stance),
+            spot_step_h_front=float(
+                spot_step_h_front if spot_step_h_front is not None
+                else _spot_defaults.spot_step_h_front),
+            spot_step_h_rear=float(
+                spot_step_h_rear if spot_step_h_rear is not None
+                else _spot_defaults.spot_step_h_rear),
+            spot_yaw_step_rad=float(
+                spot_yaw_step_rad if spot_yaw_step_rad is not None
+                else _spot_defaults.spot_yaw_step_rad),
             spot_dx_scale=0.0,
             spot_turn_amp_diff_m=0.0,
-            spot_turn_scale=1.0,
+            spot_turn_scale=float(
+                spot_turn_scale if spot_turn_scale is not None
+                else _spot_defaults.spot_turn_scale),
             spot_turn_y_gain=0.0,
-            spot_wz_scale=0.40,
-            spot_y_hold_max_m=0.055,
-            spot_com_shift_m=0.0,
+            spot_wz_scale=float(
+                spot_wz_scale if spot_wz_scale is not None
+                else _spot_defaults.spot_wz_scale),
+            spot_y_hold_max_m=float(
+                spot_y_hold_max_m if spot_y_hold_max_m is not None
+                else _spot_defaults.spot_y_hold_max_m),
+            spot_com_shift_m=float(
+                spot_com_shift_m if spot_com_shift_m is not None
+                else _spot_defaults.spot_com_shift_m),
         )
 
     @classmethod
@@ -651,6 +680,8 @@ def apply_schedule_to_gait(gait, sched: GaitScheduleOutput) -> None:
         gait.spot_yaw_step_rad = float(sched.spot_yaw_step)
     if hasattr(gait, "spot_dx_scale"):
         gait.spot_dx_scale = float(sched.spot_dx_scale)
+    if hasattr(gait, "spot_com_shift_m"):
+        gait.spot_com_shift_m = float(getattr(sched, "spot_com_shift", 0.0))
     spot = getattr(gait, "_spot", None)
     if spot is not None and hasattr(spot, "cfg"):
         spot.cfg.y_hold_max_m = float(sched.spot_y_hold_max)

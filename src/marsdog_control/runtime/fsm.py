@@ -129,6 +129,23 @@ class RuntimeStateMachine:
                     getattr(self.nat_fwd, "max_turn_amp_diff", 0.020)
                 ),
                 lock_geometry=True,
+                # Spot 只读 gait 上的 spot_*，绝不回落前进 period/step_h
+                spot_period=float(getattr(self.nat_fwd, "spot_period", 1.20)),
+                spot_stance=float(getattr(self.nat_fwd, "spot_stance", 0.70)),
+                spot_step_h_front=float(
+                    getattr(self.nat_fwd, "spot_step_h_front", 0.024)),
+                spot_step_h_rear=float(
+                    getattr(self.nat_fwd, "spot_step_h_rear", 0.024)),
+                spot_yaw_step_rad=float(
+                    getattr(self.nat_fwd, "spot_yaw_step_rad", 0.45)),
+                spot_y_hold_max_m=float(
+                    getattr(self.nat_fwd, "spot_y_hold_max_m", 0.055)),
+                spot_com_shift_m=float(
+                    getattr(self.nat_fwd, "spot_com_shift_m", 0.004)),
+                spot_wz_scale=float(
+                    getattr(self.nat_fwd, "spot_wz_scale", 0.40)),
+                spot_turn_scale=float(
+                    getattr(self.nat_fwd, "spot_turn_scale", 1.0)),
             )
         )
         self._walk_schedule = WalkSchedule(
@@ -170,6 +187,22 @@ class RuntimeStateMachine:
                     getattr(self.trot_fwd, "max_turn_amp_diff", 0.020)
                 ),
                 lock_geometry=True,
+                spot_period=float(getattr(self.trot_fwd, "spot_period", 1.20)),
+                spot_stance=float(getattr(self.trot_fwd, "spot_stance", 0.70)),
+                spot_step_h_front=float(
+                    getattr(self.trot_fwd, "spot_step_h_front", 0.024)),
+                spot_step_h_rear=float(
+                    getattr(self.trot_fwd, "spot_step_h_rear", 0.024)),
+                spot_yaw_step_rad=float(
+                    getattr(self.trot_fwd, "spot_yaw_step_rad", 0.45)),
+                spot_y_hold_max_m=float(
+                    getattr(self.trot_fwd, "spot_y_hold_max_m", 0.055)),
+                spot_com_shift_m=float(
+                    getattr(self.trot_fwd, "spot_com_shift_m", 0.004)),
+                spot_wz_scale=float(
+                    getattr(self.trot_fwd, "spot_wz_scale", 0.40)),
+                spot_turn_scale=float(
+                    getattr(self.trot_fwd, "spot_turn_scale", 1.0)),
             )
         )
 
